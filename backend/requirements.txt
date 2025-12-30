@@ -40,5 +40,6 @@ playwright>=1.40.0
 
 # 瀏覽器自動化（用於 Google Maps 截圖）
 playwright>=1.40.0
+gunicorn
 
 
