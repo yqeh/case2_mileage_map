@@ -243,7 +243,7 @@ class GoogleMapsService:
     # =========================
     # NEW: map annotation (km + A/B formatted address + generated time)
     # =========================
-       def _annotate_map_info(self, image_path: str, km, origin_addr: str, dest_addr: str):
+    def _annotate_map_info(self, image_path: str, km, origin_addr: str, dest_addr: str):
         """
         產生「報表型」地圖（推薦）：
         - 原地圖不被遮擋
@@ -251,34 +251,27 @@ class GoogleMapsService:
         - 左上角顯示 km badge
         """
         try:
-            # 先把原圖轉成 RGB（避免透明通道導致顯示差異）
             base = Image.open(image_path).convert("RGB")
             W, H = base.size
 
-            # 底部資訊欄高度（可依需要調整）
-            footer_h = 170
+            footer_h = 170  # 底部資訊欄高度（可調：150~220）
 
-            # 產生新畫布：上面是地圖、下面是白底資訊欄
             canvas = Image.new("RGB", (W, H + footer_h), (255, 255, 255))
             canvas.paste(base, (0, 0))
+
             draw = ImageDraw.Draw(canvas)
 
-            # -------------------------
-            # 字體載入：優先找「支援中文」的字體（避免方塊字）
-            # -------------------------
             def load_font(size: int):
                 candidates = []
-
                 if os.name == "nt":
                     wd = os.path.join(os.environ.get("WINDIR", "C:/Windows"), "Fonts")
                     candidates += [
-                        os.path.join(wd, "msjh.ttc"),     # 微軟正黑體
+                        os.path.join(wd, "msjh.ttc"),
                         os.path.join(wd, "msjhbd.ttc"),
                         os.path.join(wd, "simsun.ttc"),
                         os.path.join(wd, "arial.ttf"),
                     ]
                 else:
-                    # Linux/Render/Docker 常見中文字體路徑
                     candidates += [
                         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
                         "/usr/share/fonts/opentype/noto/NotoSansCJKtc-Regular.otf",
@@ -288,27 +281,23 @@ class GoogleMapsService:
                         "/usr/share/fonts/truetype/arphic/ukai.ttc",
                         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                     ]
-
                 for fp in candidates:
                     if os.path.exists(fp):
                         try:
                             return ImageFont.truetype(fp, size)
                         except Exception:
                             continue
-
                 return ImageFont.load_default()
 
             font_km = load_font(32)
             font_text = load_font(26)
 
-            # -------------------------
-            # 文字換行（以像素寬度計算）
-            # -------------------------
             def wrap_text(text: str, max_width_px: int, font: ImageFont.ImageFont) -> list[str]:
                 text = (text or "").strip()
                 if not text:
                     return [""]
-                lines, cur = [], ""
+                lines = []
+                cur = ""
                 for ch in text:
                     test = cur + ch
                     bbox = draw.textbbox((0, 0), test, font=font)
@@ -322,15 +311,12 @@ class GoogleMapsService:
                     lines.append(cur)
                 return lines
 
-            # =========================
-            # 1) 左上角 km badge（畫在地圖區，不影響 footer）
-            # =========================
+            # 1) 左上角 km badge
             if km is not None:
                 km_text = f"{km} km"
                 x, y = 20, 20
                 pad_x, pad_y = 14, 10
                 bbox = draw.textbbox((x, y), km_text, font=font_km)
-
                 draw.rectangle(
                     [bbox[0] - pad_x, bbox[1] - pad_y, bbox[2] + pad_x, bbox[3] + pad_y],
                     fill=(255, 255, 255),
@@ -339,22 +325,17 @@ class GoogleMapsService:
                 )
                 draw.text((x, y), km_text, fill=(220, 0, 0), font=font_km)
 
-            # =========================
-            # 2) 底部 footer：A/B 地址 + 系統產出時間
-            # =========================
+            # 2) Footer 區
             footer_top = H
-
-            # footer 上緣淡灰線
             draw.line([(0, footer_top), (W, footer_top)], fill=(220, 220, 220), width=2)
 
             left_x = 20
             top_y = footer_top + 20
 
-            # 右側預留空間給「系統產出時間」
             right_reserved = 420
             max_width = W - left_x - 20 - right_reserved
             if max_width < 300:
-                max_width = W - left_x - 40  # 太窄就不保留
+                max_width = W - left_x - 40
 
             a_label = f"A：{origin_addr}"
             b_label = f"B：{dest_addr}"
@@ -362,7 +343,6 @@ class GoogleMapsService:
             a_lines = wrap_text(a_label, max_width, font_text)
             b_lines = wrap_text(b_label, max_width, font_text)
 
-            # 行高
             sample_bbox = draw.textbbox((0, 0), "測", font=font_text)
             line_h = (sample_bbox[3] - sample_bbox[1]) + 10
 
@@ -376,7 +356,6 @@ class GoogleMapsService:
                 draw.text((left_x, cur_y), line, fill=(0, 0, 0), font=font_text)
                 cur_y += line_h
 
-            # 右下角：系統產出時間
             gen_time = datetime.now().strftime("%Y/%m/%d %H:%M")
             time_text = f"系統產出時間：{gen_time}"
 
@@ -387,7 +366,6 @@ class GoogleMapsService:
             tx = W - tw - 20
             ty = footer_top + footer_h - th - 20
 
-            # 時間框
             pad_x, pad_y = 12, 8
             draw.rectangle(
                 [tx - pad_x, ty - pad_y, tx + tw + pad_x, ty + th + pad_y],
@@ -397,7 +375,6 @@ class GoogleMapsService:
             )
             draw.text((tx, ty), time_text, fill=(0, 0, 0), font=font_text)
 
-            # 存檔覆蓋
             canvas.save(image_path)
             logger.info("地圖已改為 footer 報表樣式（km + A/B 地址 + 系統產出時間）")
 
