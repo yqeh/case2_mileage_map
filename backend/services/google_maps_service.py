@@ -243,143 +243,167 @@ class GoogleMapsService:
     # =========================
     # NEW: map annotation (km + A/B formatted address + generated time)
     # =========================
-    def _annotate_map_info(self, image_path: str, km, origin_addr: str, dest_addr: str):
+       def _annotate_map_info(self, image_path: str, km, origin_addr: str, dest_addr: str):
         """
-        在地圖圖片上加註：
-        - 左上：公里數（可選）
-        - 左下：A: 起點地址、B: 終點地址（formatted address）
-        - 右下：系統產出時間：YYYY/MM/DD HH:MM
+        產生「報表型」地圖（推薦）：
+        - 原地圖不被遮擋
+        - 底部新增白色資訊欄：A/B 地址 + 系統產出時間
+        - 左上角顯示 km badge
         """
         try:
-            img = Image.open(image_path)
-            if img.mode != "RGBA":
-                img = img.convert("RGBA")
+            # 先把原圖轉成 RGB（避免透明通道導致顯示差異）
+            base = Image.open(image_path).convert("RGB")
+            W, H = base.size
 
-            overlay = Image.new("RGBA", img.size, (255, 255, 255, 0))
-            draw = ImageDraw.Draw(overlay)
+            # 底部資訊欄高度（可依需要調整）
+            footer_h = 170
 
-            # ---- 字體（跨平台找字型）----
-            font = None
-            font_paths = []
+            # 產生新畫布：上面是地圖、下面是白底資訊欄
+            canvas = Image.new("RGB", (W, H + footer_h), (255, 255, 255))
+            canvas.paste(base, (0, 0))
+            draw = ImageDraw.Draw(canvas)
 
-            if os.name == "nt":
-                windows_font_dir = os.path.join(os.environ.get("WINDIR", "C:/Windows"), "Fonts")
-                font_paths.extend([
-                    os.path.join(windows_font_dir, "msjh.ttc"),
-                    os.path.join(windows_font_dir, "simsun.ttc"),
-                    os.path.join(windows_font_dir, "arial.ttf"),
-                ])
-            else:
-                linux_font_dirs = [
-                    "/usr/share/fonts/truetype/droid",
-                    "/usr/share/fonts/truetype/liberation",
-                    "/usr/share/fonts/TTF",
-                ]
-                for d in linux_font_dirs:
-                    if os.path.exists(d):
-                        font_paths.extend([
-                            os.path.join(d, "DroidSansFallbackFull.ttf"),
-                            os.path.join(d, "LiberationSans-Regular.ttf"),
-                        ])
+            # -------------------------
+            # 字體載入：優先找「支援中文」的字體（避免方塊字）
+            # -------------------------
+            def load_font(size: int):
+                candidates = []
 
-            for fp in font_paths:
-                if os.path.exists(fp):
-                    try:
-                        font = ImageFont.truetype(fp, 28)  # 地址較長，稍小避免爆版
-                        break
-                    except Exception:
-                        continue
+                if os.name == "nt":
+                    wd = os.path.join(os.environ.get("WINDIR", "C:/Windows"), "Fonts")
+                    candidates += [
+                        os.path.join(wd, "msjh.ttc"),     # 微軟正黑體
+                        os.path.join(wd, "msjhbd.ttc"),
+                        os.path.join(wd, "simsun.ttc"),
+                        os.path.join(wd, "arial.ttf"),
+                    ]
+                else:
+                    # Linux/Render/Docker 常見中文字體路徑
+                    candidates += [
+                        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                        "/usr/share/fonts/opentype/noto/NotoSansCJKtc-Regular.otf",
+                        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                        "/usr/share/fonts/truetype/noto/NotoSansTC-Regular.otf",
+                        "/usr/share/fonts/truetype/arphic/uming.ttc",
+                        "/usr/share/fonts/truetype/arphic/ukai.ttc",
+                        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                    ]
 
-            if font is None:
-                font = ImageFont.load_default()
+                for fp in candidates:
+                    if os.path.exists(fp):
+                        try:
+                            return ImageFont.truetype(fp, size)
+                        except Exception:
+                            continue
 
-            def wrap_text(text: str, max_width_px: int) -> list[str]:
+                return ImageFont.load_default()
+
+            font_km = load_font(32)
+            font_text = load_font(26)
+
+            # -------------------------
+            # 文字換行（以像素寬度計算）
+            # -------------------------
+            def wrap_text(text: str, max_width_px: int, font: ImageFont.ImageFont) -> list[str]:
                 text = (text or "").strip()
                 if not text:
                     return [""]
-                lines = []
-                current = ""
+                lines, cur = [], ""
                 for ch in text:
-                    test = current + ch
+                    test = cur + ch
                     bbox = draw.textbbox((0, 0), test, font=font)
                     if (bbox[2] - bbox[0]) <= max_width_px:
-                        current = test
+                        cur = test
                     else:
-                        if current:
-                            lines.append(current)
-                        current = ch
-                if current:
-                    lines.append(current)
+                        if cur:
+                            lines.append(cur)
+                        cur = ch
+                if cur:
+                    lines.append(cur)
                 return lines
 
-            W, H = img.size
-            padding = 12
-
-            # 左上：公里數
+            # =========================
+            # 1) 左上角 km badge（畫在地圖區，不影響 footer）
+            # =========================
             if km is not None:
                 km_text = f"{km} km"
                 x, y = 20, 20
-                bbox = draw.textbbox((x, y), km_text, font=font)
-                draw.rectangle(
-                    [bbox[0] - padding, bbox[1] - padding, bbox[2] + padding, bbox[3] + padding],
-                    fill=(255, 255, 255, 210),
-                )
-                draw.text((x, y), km_text, fill=(220, 0, 0, 255), font=font)
+                pad_x, pad_y = 14, 10
+                bbox = draw.textbbox((x, y), km_text, font=font_km)
 
-            # 左下：A/B 地址
-            max_text_width = int(W * 0.72)
+                draw.rectangle(
+                    [bbox[0] - pad_x, bbox[1] - pad_y, bbox[2] + pad_x, bbox[3] + pad_y],
+                    fill=(255, 255, 255),
+                    outline=(220, 220, 220),
+                    width=2,
+                )
+                draw.text((x, y), km_text, fill=(220, 0, 0), font=font_km)
+
+            # =========================
+            # 2) 底部 footer：A/B 地址 + 系統產出時間
+            # =========================
+            footer_top = H
+
+            # footer 上緣淡灰線
+            draw.line([(0, footer_top), (W, footer_top)], fill=(220, 220, 220), width=2)
+
+            left_x = 20
+            top_y = footer_top + 20
+
+            # 右側預留空間給「系統產出時間」
+            right_reserved = 420
+            max_width = W - left_x - 20 - right_reserved
+            if max_width < 300:
+                max_width = W - left_x - 40  # 太窄就不保留
+
             a_label = f"A：{origin_addr}"
             b_label = f"B：{dest_addr}"
 
-            a_lines = wrap_text(a_label, max_text_width)
-            b_lines = wrap_text(b_label, max_text_width)
-            lines = a_lines + b_lines
+            a_lines = wrap_text(a_label, max_width, font_text)
+            b_lines = wrap_text(b_label, max_width, font_text)
 
-            line_h = (draw.textbbox((0, 0), "測", font=font)[3] + 8)
-            block_h = line_h * len(lines) + padding * 2
+            # 行高
+            sample_bbox = draw.textbbox((0, 0), "測", font=font_text)
+            line_h = (sample_bbox[3] - sample_bbox[1]) + 10
 
-            start_x = 20
-            start_y = H - block_h - 20
-
-            draw.rectangle(
-                [start_x - padding, start_y - padding, start_x + max_text_width + padding, start_y + block_h],
-                fill=(255, 255, 255, 210),
-            )
-
-            cur_y = start_y
-            for line in lines:
-                draw.text((start_x, cur_y), line, fill=(0, 0, 0, 255), font=font)
+            cur_y = top_y
+            for line in a_lines:
+                draw.text((left_x, cur_y), line, fill=(0, 0, 0), font=font_text)
                 cur_y += line_h
 
-            # 右下：系統產出時間
+            cur_y += 6
+            for line in b_lines:
+                draw.text((left_x, cur_y), line, fill=(0, 0, 0), font=font_text)
+                cur_y += line_h
+
+            # 右下角：系統產出時間
             gen_time = datetime.now().strftime("%Y/%m/%d %H:%M")
             time_text = f"系統產出時間：{gen_time}"
 
-            tb = draw.textbbox((0, 0), time_text, font=font)
+            tb = draw.textbbox((0, 0), time_text, font=font_text)
             tw = tb[2] - tb[0]
             th = tb[3] - tb[1]
 
             tx = W - tw - 20
-            ty = H - th - 20
+            ty = footer_top + footer_h - th - 20
 
+            # 時間框
+            pad_x, pad_y = 12, 8
             draw.rectangle(
-                [tx - padding, ty - padding, tx + tw + padding, ty + th + padding],
-                fill=(255, 255, 255, 210),
+                [tx - pad_x, ty - pad_y, tx + tw + pad_x, ty + th + pad_y],
+                fill=(255, 255, 255),
+                outline=(220, 220, 220),
+                width=2,
             )
-            draw.text((tx, ty), time_text, fill=(0, 0, 0, 255), font=font)
+            draw.text((tx, ty), time_text, fill=(0, 0, 0), font=font_text)
 
-            # 合成
-            img = Image.alpha_composite(img, overlay)
-
-            # 存成 RGB（避免透明通道造成顯示差異）
-            background = Image.new("RGB", img.size, (255, 255, 255))
-            background.paste(img, mask=img.split()[3])
-            background.save(image_path)
-
-            logger.info("成功在地圖上加註公里數、A/B 地址與系統產出時間")
+            # 存檔覆蓋
+            canvas.save(image_path)
+            logger.info("地圖已改為 footer 報表樣式（km + A/B 地址 + 系統產出時間）")
 
         except Exception as e:
             logger.error(f"在地圖上加註資訊錯誤: {str(e)}")
+
 
     def download_static_map_with_polyline(
         self,
