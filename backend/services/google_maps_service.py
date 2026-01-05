@@ -262,31 +262,17 @@ class GoogleMapsService:
             draw = ImageDraw.Draw(canvas)
 
             def load_font(size: int):
-                candidates = []
-                if os.name == "nt":
-                    wd = os.path.join(os.environ.get("WINDIR", "C:/Windows"), "Fonts")
-                    candidates += [
-                        os.path.join(wd, "msjh.ttc"),
-                        os.path.join(wd, "msjhbd.ttc"),
-                        os.path.join(wd, "simsun.ttc"),
-                        os.path.join(wd, "arial.ttf"),
-                    ]
-                else:
-                    candidates += [
-                        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                        "/usr/share/fonts/opentype/noto/NotoSansCJKtc-Regular.otf",
-                        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-                        "/usr/share/fonts/truetype/noto/NotoSansTC-Regular.otf",
-                        "/usr/share/fonts/truetype/arphic/uming.ttc",
-                        "/usr/share/fonts/truetype/arphic/ukai.ttc",
-                        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                    ]
-                for fp in candidates:
-                    if os.path.exists(fp):
-                        try:
-                            return ImageFont.truetype(fp, size)
-                        except Exception:
-                            continue
+                """載入字體：優先使用專案字體，失敗則使用預設字體"""
+                # 從專案路徑載入字體：backend/fonts/NotoSansCJK-Regular.ttc
+                font_path = Path(__file__).parent.parent / "fonts" / "NotoSansCJK-Regular.ttc"
+                
+                if font_path.exists():
+                    try:
+                        return ImageFont.truetype(str(font_path), size)
+                    except Exception as e:
+                        logger.warning(f"無法載入專案字體 {font_path}: {str(e)}，使用預設字體")
+                
+                # 回退到預設字體
                 return ImageFont.load_default()
 
             font_km = load_font(32)
