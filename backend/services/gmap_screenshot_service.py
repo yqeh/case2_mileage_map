@@ -34,7 +34,7 @@ async def capture_route_screenshot(
         output_path: 輸出圖片路徑
         viewport_width: 瀏覽器視窗寬度（預設 1500）
         viewport_height: 瀏覽器視窗高度（預設 750）
-        wait_timeout: 等待頁面載入的超時時間（毫秒，預設 10000）
+        wait_timeout: 等待頁面載入的超時時間（毫秒，預設 30000）
     
     Returns:
         str: 截圖檔案路徑，如果失敗則返回 None
@@ -86,48 +86,107 @@ async def capture_route_screenshot(
                 )
                 page = await context.new_page()
                 
+                # 設定 console 和 pageerror 監聽器
+                console_messages = []
+                page_errors = []
+                
+                def handle_console(msg):
+                    console_messages.append({
+                        "type": msg.type,
+                        "text": msg.text,
+                        "location": str(msg.location) if hasattr(msg, 'location') else None
+                    })
+                    logger.debug(f"[PLAYWRIGHT_CONSOLE] {msg.type}: {msg.text}")
+                
+                def handle_pageerror(error):
+                    page_errors.append({
+                        "message": str(error),
+                        "stack": error.stack if hasattr(error, 'stack') else None
+                    })
+                    logger.debug(f"[PLAYWRIGHT_PAGEERROR] {error}")
+                
+                page.on("console", handle_console)
+                page.on("pageerror", handle_pageerror)
+                
                 try:
-                    # 導航到 Google Maps 路線頁面
-                    # 使用 'load' 而不是 'networkidle'，因為 Google Maps 會持續載入資源
-                    await page.goto(maps_url, wait_until='load', timeout=wait_timeout)
+                    # 1) 導航到 Google Maps 路線頁面（使用 domcontentloaded）
+                    logger.debug(f"導航到 Google Maps: {maps_url}")
+                    await page.goto(maps_url, wait_until="domcontentloaded", timeout=wait_timeout)
+                    logger.debug("頁面 domcontentloaded 完成")
                     
-                    # 等待頁面基本載入完成
-                    await page.wait_for_timeout(3000)  # 等待 3 秒讓頁面基本載入
-                    
-                    # 嘗試等待左側路線面板或地圖載入
-                    # Google Maps 的路線面板可能有多種結構，使用更寬鬆的選擇器
+                    # 2) 等待策略：等待 canvas 或 main 元素
                     try:
-                        # 等待任何包含路線資訊的元素出現
-                        await page.wait_for_selector(
-                            'div[role="main"], [data-value="駕車"], [aria-label*="分鐘"], [aria-label*="公里"], canvas, [jsaction*="route"]',
-                            timeout=15000
-                        )
-                        logger.debug("檢測到頁面元素")
+                        logger.debug("等待 canvas 或 main 元素...")
+                        await page.wait_for_selector('canvas, div[role="main"]', timeout=15000)
+                        logger.debug("檢測到 canvas 或 main 元素")
                     except PlaywrightTimeoutError:
-                        logger.warning("未檢測到特定元素，繼續等待...")
+                        logger.warning("未檢測到 canvas 或 main 元素，繼續等待...")
                     
-                    # 額外等待頁面完全載入（包括地圖和路線）
-                    await page.wait_for_timeout(8000)  # 等待 8 秒讓地圖和路線完全載入
+                    # 3) 額外等待時間（2-4 秒）
+                    wait_time = 3000  # 3 秒
+                    logger.debug(f"等待 {wait_time}ms 讓地圖完全載入...")
+                    await page.wait_for_timeout(wait_time)
                     
-                    # 再等待一下確保所有內容都載入完成（包括左側面板的路線列表）
-                    await page.wait_for_timeout(2000)
+                    # 4) 截圖前檢查 viewport 尺寸
+                    viewport_size = page.viewport_size
+                    if viewport_size and (viewport_size['width'] == 0 or viewport_size['height'] == 0):
+                        logger.error(f"Viewport 尺寸異常: {viewport_size}")
+                        return None
+                    logger.debug(f"Viewport 尺寸: {viewport_size}")
                     
-                    # 截取整個視窗的截圖
+                    # 5) 截圖前最後等待
+                    await page.wait_for_timeout(1000)
+                    
+                    # 6) 截取整個視窗的截圖
+                    logger.debug(f"開始截圖，儲存到: {output_path}")
                     await page.screenshot(
                         path=str(output_path),
                         full_page=False,  # 只截視窗大小
                         type='png'
                     )
+                    logger.debug("截圖完成")
                     
-                    logger.info(f"成功截取 Google Maps 路線截圖: {output_path}")
+                    # 7) 截圖後立刻檢查檔案
+                    if not os.path.exists(output_path):
+                        logger.error(f"截圖檔案不存在: {output_path}")
+                        if console_messages:
+                            logger.debug(f"Console 訊息: {console_messages}")
+                        if page_errors:
+                            logger.debug(f"Page 錯誤: {page_errors}")
+                        return None
                     
+                    file_size = os.path.getsize(output_path)
+                    if file_size <= 10240:  # 10KB
+                        logger.error(f"截圖檔案太小 ({file_size} bytes)，可能截圖失敗: {output_path}")
+                        if console_messages:
+                            logger.debug(f"Console 訊息: {console_messages}")
+                        if page_errors:
+                            logger.debug(f"Page 錯誤: {page_errors}")
+                        # 刪除無效檔案
+                        try:
+                            os.remove(output_path)
+                        except:
+                            pass
+                        return None
+                    
+                    logger.info(f"成功截取 Google Maps 路線截圖: {output_path} ({file_size} bytes)")
                     return str(output_path)
                     
                 except PlaywrightTimeoutError as e:
                     logger.error(f"等待頁面載入超時: {str(e)}")
+                    if console_messages:
+                        logger.debug(f"Console 訊息: {console_messages}")
+                    if page_errors:
+                        logger.debug(f"Page 錯誤: {page_errors}")
                     return None
                 except Exception as e:
                     logger.error(f"截取 Google Maps 截圖時發生錯誤: {str(e)}")
+                    import traceback
+                    logger.debug(f"錯誤詳情: {traceback.format_exc()}")
+                    if console_messages:
+                        logger.debug(f"Console 訊息: {console_messages}")
+                    if page_errors:
+                        logger.debug(f"Page 錯誤: {page_errors}")
                     return None
                 finally:
                     # 確保 page 和 context 被正確關閉
@@ -154,6 +213,8 @@ async def capture_route_screenshot(
     
     except Exception as e:
         logger.error(f"Playwright 執行失敗: {str(e)}")
+        import traceback
+        logger.debug(f"錯誤詳情: {traceback.format_exc()}")
         return None
 
 
