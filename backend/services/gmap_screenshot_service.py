@@ -21,19 +21,19 @@ async def capture_route_screenshot(
     origin: str,
     destination: str,
     output_path: str | Path,
-    viewport_width: int = 1500,
-    viewport_height: int = 750,
+    viewport_width: int = 1920,
+    viewport_height: int = 1080,
     wait_timeout: int = 30000,
 ) -> Optional[str]:
     """
-    使用 headless browser 開啟 Google Maps 的駕車路線畫面並截圖
+    使用 headless browser 開啟 Google Maps 的駕車路線畫面並截圖（包含左側面板和右側地圖）
     
     Args:
         origin: 起點地址或名稱
         destination: 終點地址或名稱
         output_path: 輸出圖片路徑
-        viewport_width: 瀏覽器視窗寬度（預設 1500）
-        viewport_height: 瀏覽器視窗高度（預設 750）
+        viewport_width: 瀏覽器視窗寬度（預設 1920，確保能完整顯示左側面板和地圖）
+        viewport_height: 瀏覽器視窗高度（預設 1080，確保能完整顯示頁面）
         wait_timeout: 等待頁面載入的超時時間（毫秒，預設 30000）
     
     Returns:
@@ -222,20 +222,20 @@ def capture_route_screenshot_sync(
     origin: str,
     destination: str,
     output_path: str | Path,
-    viewport_width: int = 1500,
-    viewport_height: int = 750,
+    viewport_width: int = 1920,
+    viewport_height: int = 1080,
     wait_timeout: int = 30000,
 ) -> Optional[str]:
     """
-    同步版本的 Google Maps 路線截圖函數
+    同步版本的 Google Maps 路線截圖函數（包含左側面板和右側地圖）
     
     Args:
         origin: 起點地址或名稱
         destination: 終點地址或名稱
         output_path: 輸出圖片路徑
-        viewport_width: 瀏覽器視窗寬度（預設 1500）
-        viewport_height: 瀏覽器視窗高度（預設 750）
-        wait_timeout: 等待頁面載入的超時時間（毫秒，預設 10000）
+        viewport_width: 瀏覽器視窗寬度（預設 1920，確保能完整顯示左側面板和地圖）
+        viewport_height: 瀏覽器視窗高度（預設 1080，確保能完整顯示頁面）
+        wait_timeout: 等待頁面載入的超時時間（毫秒，預設 30000）
     
     Returns:
         str: 截圖檔案路徑，如果失敗則返回 None
