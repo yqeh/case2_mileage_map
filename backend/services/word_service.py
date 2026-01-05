@@ -165,14 +165,36 @@ class WordService:
                     
                     # 插入 Google Maps 路線截圖（完整截圖，包含左側面板和右側地圖）
                     map_image_path = record.get('StaticMapImage')
-                    if map_image_path and os.path.exists(map_image_path):
+                    absolute_image_path = None
+                    
+                    if map_image_path:
+                        # 處理相對路徑（前面可能有 /）
+                        from utils.path_manager import get_base_dir
+                        base_dir = get_base_dir()
+                        
+                        # 移除前面的 /
+                        clean_path = map_image_path.lstrip('/')
+                        # 轉換為絕對路徑
+                        absolute_image_path = base_dir / clean_path
+                        
+                        # 檢查檔案是否存在且大小 > 10KB
+                        if absolute_image_path.exists():
+                            file_size = os.path.getsize(absolute_image_path)
+                            if file_size <= 10240:  # 10KB
+                                logger.warning(f"  地圖圖片檔案太小 ({file_size} bytes): {absolute_image_path}")
+                                absolute_image_path = None
+                        else:
+                            logger.warning(f"  地圖圖片檔案不存在: {absolute_image_path}")
+                            absolute_image_path = None
+                    
+                    if absolute_image_path:
                         try:
-                            logger.debug(f"  插入圖片: {map_image_path}")
+                            logger.debug(f"  插入圖片: {absolute_image_path}")
                             picture_paragraph = doc.add_paragraph()
                             picture_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
                             run = picture_paragraph.add_run()
                             # 使用 6.5 英吋寬度（與 mileage_report_demo 一致）
-                            run.add_picture(map_image_path, width=Inches(6.5))
+                            run.add_picture(str(absolute_image_path), width=Inches(6.5))
                         except Exception as e:
                             logger.error(f"  插入圖片失敗: {e}")
                             # 插入錯誤提示文字
@@ -181,7 +203,7 @@ class WordService:
                             error_run = error_paragraph.add_run("本筆地圖截圖失敗")
                             error_run.font.size = Pt(14)
                     else:
-                        logger.warning(f"  沒有地圖圖片: {map_image_path}")
+                        logger.warning(f"  沒有有效的地圖圖片: {map_image_path}")
                         # 插入錯誤提示文字
                         error_paragraph = doc.add_paragraph()
                         error_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
