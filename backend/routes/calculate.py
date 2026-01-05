@@ -10,10 +10,114 @@ from utils.path_manager import get_temp_maps_dir, get_relative_path
 
 from datetime import datetime
 from pathlib import Path
+import os
 
 bp = Blueprint("calculate", __name__)
 maps_service = GoogleMapsService()
 place_mapping = PlaceMappingService()
+
+
+@bp.route("/test-screenshot", methods=["POST"])
+def test_screenshot():
+    """
+    測試 Google Maps 截圖功能
+    """
+    try:
+        data = request.get_json() or {}
+        origin = (data.get("origin") or "").strip()
+        destination = (data.get("destination") or "").strip()
+
+        if not origin or not destination:
+            return jsonify({
+                "success": False,
+                "error": "請提供起點和終點",
+                "origin": origin,
+                "destination": destination
+            }), 400
+
+        # 構建 Google Maps URL（用於日誌）
+        from urllib.parse import quote
+        origin_encoded = quote(origin)
+        destination_encoded = quote(destination)
+        maps_url = (
+            f"https://www.google.com/maps/dir/?api=1"
+            f"&origin={origin_encoded}"
+            f"&destination={destination_encoded}"
+            f"&travelmode=driving"
+        )
+
+        logger.info(f"[TEST_SCREENSHOT] 開始測試截圖: {origin} -> {destination}")
+        logger.info(f"[TEST_SCREENSHOT] Maps URL: {maps_url}")
+
+        # 準備輸出路徑
+        temp_maps_dir = get_temp_maps_dir()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        screenshot_filename = f"test_screenshot_{timestamp}.png"
+        expected_path = temp_maps_dir / screenshot_filename
+
+        # 呼叫截圖函數
+        screenshot_path = None
+        error_details = None
+        try:
+            logger.info(f"[TEST_SCREENSHOT] 呼叫 capture_route_screenshot_sync")
+            screenshot_result = capture_route_screenshot_sync(
+                origin=origin,
+                destination=destination,
+                output_path=str(expected_path),
+                viewport_width=1500,
+                viewport_height=750,
+            )
+
+            if screenshot_result:
+                screenshot_path = Path(screenshot_result)
+            else:
+                screenshot_path = expected_path if expected_path.exists() else None
+
+        except Exception as e:
+            error_details = {
+                "exception_type": type(e).__name__,
+                "exception_message": str(e),
+                "traceback": None
+            }
+            import traceback
+            error_details["traceback"] = traceback.format_exc()
+            logger.error(f"[TEST_SCREENSHOT] 截圖過程發生例外: {error_details}")
+
+        # 檢查結果
+        exists = False
+        file_size = 0
+        if screenshot_path:
+            exists = os.path.exists(screenshot_path)
+            if exists:
+                file_size = os.path.getsize(screenshot_path)
+
+        logger.info(f"[TEST_SCREENSHOT] 結果 - 路徑: {screenshot_path}, 存在: {exists}, 大小: {file_size} bytes")
+
+        # 構建回應
+        response_data = {
+            "success": exists and file_size > 10240,  # 10KB
+            "screenshot_path": str(screenshot_path) if screenshot_path else None,
+            "exists": exists,
+            "file_size": file_size,
+            "maps_url": maps_url,
+            "error": error_details
+        }
+
+        if not exists:
+            response_data["error"] = response_data.get("error") or "截圖檔案不存在"
+        elif file_size <= 10240:
+            response_data["error"] = f"截圖檔案太小 ({file_size} bytes)，可能截圖失敗"
+
+        return jsonify(response_data), 200 if response_data["success"] else 500
+
+    except Exception as e:
+        logger.error(f"[TEST_SCREENSHOT] 測試端點錯誤: {str(e)}")
+        import traceback
+        return jsonify({
+            "success": False,
+            "error": f"測試端點錯誤: {str(e)}",
+            "traceback": traceback.format_exc()
+        }), 500
 
 
 @bp.route("/distance", methods=["POST"])
@@ -177,7 +281,7 @@ def calculate_batch():
                     screenshot_filename = f"gmap_route_{timestamp}.png"
                     expected_path = temp_maps_dir / screenshot_filename
 
-                    logger.info(f"開始使用 Playwright 截取 Google Maps 路線: {safe_origin} -> {safe_destination}")
+                    logger.info(f"[TRY_PLAYWRIGHT] {safe_origin} -> {safe_destination}")
                     screenshot_result = capture_route_screenshot_sync(
                         origin=origin_address,
                         destination=destination_address,
@@ -192,19 +296,35 @@ def calculate_batch():
                     else:
                         screenshot_path = expected_path if expected_path.exists() else None
 
-                    if screenshot_path and screenshot_path.exists():
-                        logger.info(f"成功截取 Google Maps 路線截圖: {screenshot_path}")
-                    else:
-                        logger.warning("Playwright 截圖失敗，回退使用靜態地圖")
+                    # 驗證截圖檔案
+                    exists = False
+                    file_size = 0
+                    if screenshot_path:
+                        exists = os.path.exists(screenshot_path)
+                        if exists:
+                            file_size = os.path.getsize(screenshot_path)
+                            # 檢查檔案大小（必須 > 10KB）
+                            if file_size <= 10240:
+                                logger.warning(f"[PLAYWRIGHT_RESULT] 截圖檔案太小 ({file_size} bytes)，視為失敗")
+                                screenshot_path = None
+                                exists = False
+                                file_size = 0
+
+                    logger.info(f"[PLAYWRIGHT_RESULT] path={screenshot_path}, exists={exists}, size={file_size} bytes")
+
+                    if not exists or not screenshot_path:
+                        logger.warning("[FALLBACK_STATICMAP] Playwright 截圖失敗，回退使用靜態地圖")
                         screenshot_path = None
 
                 except Exception as e:
-                    logger.warning(f"Playwright 截圖過程發生錯誤: {str(e)}，回退使用靜態地圖")
+                    logger.warning(f"[FALLBACK_STATICMAP] Playwright 截圖過程發生錯誤: {str(e)}，回退使用靜態地圖")
+                    import traceback
+                    logger.debug(f"錯誤詳情: {traceback.format_exc()}")
                     screenshot_path = None
 
                 # 回退：Google Maps 官方樣式靜態地圖（含替代路線）
                 if not screenshot_path:
-                    logger.info("回退使用 Google Maps 官方樣式靜態地圖")
+                    logger.info("[FALLBACK_STATICMAP] 使用 Google Maps 官方樣式靜態地圖")
                     alternative_polylines = route_detail.get("alternative_polylines", [])
                     map_image_path = maps_service.download_static_map_with_polyline(
                         route_detail["polyline"],
@@ -214,7 +334,13 @@ def calculate_batch():
                         alternative_polylines=alternative_polylines,
                     )
                     if map_image_path:
-                        screenshot_path = Path(map_image_path) if not isinstance(map_image_path, Path) else map_image_path
+                        map_path = Path(map_image_path) if not isinstance(map_image_path, Path) else map_image_path
+                        # 驗證靜態地圖檔案也存在
+                        if map_path.exists() and os.path.getsize(map_path) > 10240:
+                            screenshot_path = map_path
+                        else:
+                            logger.warning(f"[FALLBACK_STATICMAP] 靜態地圖檔案無效: {map_path}")
+                            screenshot_path = None
 
                 # 更新紀錄
                 record["OneWayKm"] = route_detail["distance_km"]
@@ -230,10 +356,16 @@ def calculate_batch():
                 if "estimated_time" in route_detail:
                     record["EstimatedTime"] = route_detail.get("estimated_time")
 
-                if screenshot_path and screenshot_path.exists():
-                    record["StaticMapImage"] = get_relative_path(str(screenshot_path))
+                # 確保 StaticMapImage 是前端可用的相對路徑（前面有 /）
+                if screenshot_path and screenshot_path.exists() and os.path.getsize(screenshot_path) > 10240:
+                    relative_path = get_relative_path(str(screenshot_path))
+                    # 確保路徑前面有 /
+                    if not relative_path.startswith('/'):
+                        relative_path = '/' + relative_path
+                    record["StaticMapImage"] = relative_path
                 else:
                     record["StaticMapImage"] = None
+                    logger.warning(f"第 {idx + 1} 筆資料地圖截圖失敗，StaticMapImage 設為 None")
 
                 updated_records.append(record)
 
