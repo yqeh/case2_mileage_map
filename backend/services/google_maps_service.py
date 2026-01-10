@@ -245,61 +245,56 @@ class GoogleMapsService:
     # =========================
     # NEW: map annotation (km + A/B formatted address + generated time)
     # =========================
-    def _load_cjk_font(self, size: int) -> ImageFont.ImageFont:
-        """
-        載入 CJK（中日韓）字型，固定從 backend/assets/fonts/ 讀取
-        
-        Args:
-            size: 字型大小
-            
-        Returns:
-            ImageFont.ImageFont: 載入的字型物件
-            
-        Raises:
-            FileNotFoundError: 如果字型檔案不存在
-            OSError: 如果無法載入字型檔案
-        """
-        # 優先尋找專案目錄下的 msjh.ttc (微軟正黑體)
-        # 本地開發時已複製過去，部署時也會包含
-        bundled_font = assets_fonts_dir / "msjh.ttc"
-        
-        # 備用清單 (若 bundled 不存在，回退 NotoSans 或系統字)
-        font_candidates = [
-            bundled_font,
-            assets_fonts_dir / "NotoSansCJKtc-Regular.otf",
-        ]
+    def _load_cjk_font(self, size: int):
+        from PIL import ImageFont
+        import os
 
-        for font_path in font_candidates:
-            if font_path.exists():
+        candidates = []
+
+        # Windows
+        if os.name == "nt":
+            win = os.environ.get("WINDIR", "C:/Windows")
+            candidates += [
+                os.path.join(win, "Fonts", "msjh.ttc"),   # 微軟正黑體
+                os.path.join(win, "Fonts", "msjhbd.ttc"),
+                os.path.join(win, "Fonts", "simsun.ttc"),
+                os.path.join(win, "Fonts", "kaiu.ttf"),
+                os.path.join(win, "Fonts", "arial.ttf"),
+            ]
+            # Add user local fonts just in case
+            local = os.environ.get("LOCALAPPDATA", "")
+            if local:
+                 candidates.append(os.path.join(local, "Microsoft", "Windows", "Fonts", "msjh.ttc"))
+        else:
+            # Render / Ubuntu 常見 Noto CJK 路徑
+            candidates += [
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/opentype/noto/NotoSansCJKtc-Regular.otf",
+                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/truetype/noto/NotoSansTC-Regular.otf",
+                "/usr/share/fonts/truetype/noto/NotoSansTC-Regular.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ]
+            
+        # 專案內建字型 (最高優先級)
+        assets_fonts_dir = Path(__file__).parent.parent / "assets" / "fonts"
+        candidates.insert(0, str(assets_fonts_dir / "msjh.ttc"))
+        candidates.insert(1, str(assets_fonts_dir / "NotoSansCJKtc-Regular.otf"))
+
+        for fp in candidates:
+            if fp and os.path.exists(fp):
                 try:
-                    # TTC 需 index=0
-                    if font_path.suffix.lower() == '.ttc':
-                        font = ImageFont.truetype(str(font_path), size, index=0)
-                    else:
-                        font = ImageFont.truetype(str(font_path), size)
-                    logger.info(f"✓ 成功載入專案字型: {font_path} (大小: {size})")
-                    return font
-                except Exception as e:
-                    logger.warning(f"  嘗試載入專案字型失敗: {font_path}, 錯誤: {e}")
+                    # 嘗試不同的 index，針對 TTC
+                    if fp.lower().endswith('.ttc'):
+                        try:
+                            return ImageFont.truetype(fp, size, index=0)
+                        except:
+                             return ImageFont.truetype(fp, size, index=1)
+                    return ImageFont.truetype(fp, size)
+                except Exception:
                     continue
 
-        # 最後一道防線：如果專案字型真的沒了，為了不 crash，還是試試看絕對路徑 (雖然使用者說不要依賴)
-        fallback_path = "C:/Windows/Fonts/msjh.ttc"
-        if os.path.exists(fallback_path):
-             try:
-                 font = ImageFont.truetype(fallback_path, size, index=0)
-                 logger.warning(f"⚠ 專案字型遺失，回退使用系統字型: {fallback_path}")
-                 return font
-             except:
-                 pass
-
-        # 如果都失敗
-        error_msg = (
-            f"無法載入 CJK 字型檔案\n"
-            f"請確保 {bundled_font} 存在"
-        )
-        logger.error(f"⚠ {error_msg}")
-        raise FileNotFoundError(error_msg)
+        return ImageFont.load_default()
 
     def annotate_map_info(self, image_path: str, distance_km, origin_addr: str, dest_addr: str, round_trip_km=None, date_text=None):
         """
@@ -640,6 +635,107 @@ class GoogleMapsService:
         except Exception as e:
             logger.error(f"下載簡單靜態地圖錯誤: {str(e)}")
             return None
+       
+    def _draw_ab_markers(self, draw, ax, ay, bx, by):
+        """
+        手動繪製 A/B 點 Marker (確保一定看得到)
+        """
+        # 圓點半徑
+        r = 12
+
+        # A: 紅色 (起點)
+        draw.ellipse((ax - r, ay - r, ax + r, ay + r), fill=(255, 0, 0, 255), outline=(255, 255, 255, 255), width=3)
+        # B: 綠色 (終點)
+        draw.ellipse((bx - r, by - r, bx + r, by + r), fill=(0, 180, 0, 255), outline=(255, 255, 255, 255), width=3)
+        
+        # 在圓點中間畫上 A / B 文字 (選擇性)
+        font_marker = ImageFont.load_default()
+        # 簡單置中 A
+        draw.text((ax-3, ay-5), "A", fill=(255,255,255), font=font_marker)
+        # 簡單置中 B
+        draw.text((bx-3, by-5), "B", fill=(255,255,255), font=font_marker)
+
+    def _annotate_ab_near_markers(self, image_path: str, a_lat, a_lng, b_lat, b_lng, a_addr: str, b_addr: str,
+                                  zoom: int, center_lat: float, center_lng: float):
+        """
+        將 A/B 地址畫在 A/B 點旁邊（貼近 marker）
+        """
+        try:
+            img = Image.open(image_path)
+            if img.mode != "RGBA":
+                img = img.convert("RGBA")
+
+            overlay = Image.new("RGBA", img.size, (255, 255, 255, 0))
+            draw = ImageDraw.Draw(overlay)
+
+            # 字型（使用新的通用載入邏輯）
+            font = self._load_cjk_font(24)
+
+            W, H = img.size
+
+            # 轉成像素座標
+            ax, ay = self._latlng_to_pixel(a_lat, a_lng, zoom, W, H, center_lat, center_lng)
+            bx, by = self._latlng_to_pixel(b_lat, b_lng, zoom, W, H, center_lat, center_lng)
+
+            # 1. 先畫 A/B 圓點（不靠 Google markers）
+            self._draw_ab_markers(draw, ax, ay, bx, by)
+
+            # 2. 再畫 A/B 地址框
+            a_text = f"A點：{a_addr}"
+            b_text = f"B點：{b_addr}"
+
+            # 預設放右上（避免壓到 marker），如果超出邊界就換位置
+            def place_box(px, py, text, prefer="right"):
+                offset = 20 # 避開 marker 半徑
+                max_w = int(W * 0.42)
+
+                # 候選位置：右上、右下、左上、左下
+                candidates = []
+                if prefer == "right":
+                    candidates = [
+                        (px + offset, py - 60),
+                        (px + offset, py + offset),
+                        (px - max_w - offset, py - 60),
+                        (px - max_w - offset, py + offset),
+                    ]
+                else:
+                    candidates = [
+                        (px - max_w - offset, py - 60),
+                        (px - max_w - offset, py + offset),
+                        (px + offset, py - 60),
+                        (px + offset, py + offset),
+                    ]
+
+                for (x, y) in candidates:
+                    # 先畫在暫存 overlay 上試 bbox
+                    tmp = Image.new("RGBA", overlay.size, (0, 0, 0, 0))
+                    tmp_draw = ImageDraw.Draw(tmp)
+                    bb = self._draw_label_box(tmp_draw, text, x, y, font, max_width=max_w)
+                    l, t, r, b = bb
+                    if l >= 8 and t >= 8 and r <= W - 8 and b <= H - 8:
+                        # 真正畫到 overlay
+                        self._draw_label_box(draw, text, x, y, font, max_width=max_w)
+                        return
+
+                # 都不行就硬放（但 clamp 到邊界）
+                x = min(max(8, int(px + offset)), W - max_w - 8)
+                y = min(max(8, int(py + offset)), H - 80)
+                self._draw_label_box(draw, text, x, y, font, max_width=max_w)
+
+            place_box(ax, ay, a_text, prefer="right")
+            place_box(bx, by, b_text, prefer="left")
+
+            img = Image.alpha_composite(img, overlay)
+
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            background.paste(img, mask=img.split()[3])
+            background.save(image_path)
+            logger.info("地圖已加註 A/B Marker 旁地址 (Advanced Burn-in + Manual Markers)")
+
+        except Exception as e:
+            logger.error(f"標註 A/B Marker 旁地址錯誤: {e}")
+            import traceback
+            logger.error(traceback.format_exc())}")
 
     # 仍保留：舊版只加 km 的功能（如果其他地方還在用）
     def _add_km_text_to_map(self, image_path, km):
