@@ -281,29 +281,42 @@ class GoogleMapsService:
         
         # 如果專案內字型都無法載入，嘗試使用系統字型 (Windows)
         if os.name == "nt":
-            windows_font_dir = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
-            system_fonts = [
-                "msjh.ttc",     # 微軟正黑體
-                "msjhbd.ttc",   # 微軟正黑體 粗體
-                "simsun.ttc",   # 新細明體
-                "mingliu.ttc",  # 細明體
-                "arial.ttf",    # Arial (英文 fallback)
+            # 定義可能的字型目錄
+            font_dirs = [
+                Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts",
+                Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Windows" / "Fonts",
             ]
             
-            for font_name in system_fonts:
-                font_path = windows_font_dir / font_name
-                if font_path.exists():
-                    try:
-                        font = ImageFont.truetype(str(font_path), size)
-                        logger.info(f"✓ 使用系統字型: {font_path} (大小: {size})")
-                        return font
-                    except Exception as e:
-                        continue
+            # 定義可能的字型名稱 (優先順序)
+            system_fonts = [
+                "msjh.ttc",      # 微軟正黑體 (Microsoft JhengHei)
+                "msjhbd.ttc",    # 微軟正黑體 粗體
+                "simsun.ttc",    # 新細明體
+                "mingliu.ttc",   # 細明體
+                "kaiu.ttf",      # 標楷體
+                "DFKai-SB.ttf",  # 標楷體
+            ]
+            
+            for font_dir in font_dirs:
+                if not font_dir.exists():
+                    continue
+                    
+                for font_name in system_fonts:
+                    font_path = font_dir / font_name
+                    if font_path.exists():
+                        try:
+                            # 嘗試載入
+                            font = ImageFont.truetype(str(font_path), size)
+                            logger.info(f"✓ 成功載入系統字型: {font_path} (大小: {size})")
+                            return font
+                        except Exception as e:
+                            logger.warning(f"  嘗試載入系統字型失敗: {font_path}, 錯誤: {e}")
+                            continue
 
         # 如果所有字型都無法載入，拋出錯誤
         error_msg = (
             f"無法載入任何 CJK 字型檔案。請確認字型檔案存在於 {assets_fonts_dir}\n"
-            f"或是 Windows 系統字型 (msjh.ttc)"
+            f"或是 Windows 系統字型 (如: C:/Windows/Fonts/msjh.ttc)"
         )
         logger.error(f"⚠ {error_msg}")
         raise FileNotFoundError(error_msg)
