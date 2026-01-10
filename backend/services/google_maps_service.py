@@ -306,7 +306,11 @@ class GoogleMapsService:
                     if font_path.exists():
                         try:
                             # 嘗試載入
-                            font = ImageFont.truetype(str(font_path), size)
+                            # 注意: TTC 檔案可能需要指定 index=0
+                            if font_path.suffix.lower() == '.ttc':
+                                font = ImageFont.truetype(str(font_path), size, index=0)
+                            else:
+                                font = ImageFont.truetype(str(font_path), size)
                             logger.info(f"✓ 成功載入系統字型: {font_path} (大小: {size})")
                             return font
                         except Exception as e:
@@ -366,20 +370,28 @@ class GoogleMapsService:
             scale = max(W / 1000.0, 0.8)
             
             # --- 樣式設定 ---
-            # 1. Header 區域
-            header_font_size = int(32 * scale)  # 標題字大一點
+            # Header 區域設計 (三行顯示)
+            # Line 1: 日期 + 往返里程
+            # Line 2: (A) 起點
+            # Line 3: (B) 終點
+            
+            line_height = int(50 * scale)
+            header_font_size = int(36 * scale)  # 字體大一點
             padding_base = int(20 * scale)
-            header_padding_y = int(35 * scale)
+            header_padding_top = int(20 * scale)
+            header_padding_bottom = int(20 * scale)
             
             # 準備文字
-            # 格式：10/22 高雄市...至 高雄市...往返,核銷 19.1 公里。
             rt_km = round_trip_km if round_trip_km is not None else (distance_km * 2 if distance_km else 0)
-            header_text = f"{date_str} {origin_addr}至 {dest_addr}往返，核銷 {rt_km} 公里。"
+            
+            text_line1 = f"{date_str}  往返核銷: {rt_km} 公里"
+            text_line2 = f"A (起點): {origin_addr}"
+            text_line3 = f"B (終點): {dest_addr}"
             
             # 載入字型
             try:
                 font_header = self._load_cjk_font(header_font_size)
-                # Badge 字型 (大, 紅色)
+                # Badge 字型
                 font_badge_num = self._load_cjk_font(int(48 * scale))
                 font_badge_unit = self._load_cjk_font(int(32 * scale))
             except FileNotFoundError:
@@ -388,22 +400,34 @@ class GoogleMapsService:
                 font_badge_num = ImageFont.load_default()
                 font_badge_unit = ImageFont.load_default()
 
-            # 計算 Header 高度
-            temp_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-            bbox = temp_draw.textbbox((0, 0), header_text, font=font_header)
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
+            # 計算 Header 高度 (3行 + padding)
+            # 使用 textbbox 計算實際高度
+            dummy_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+            _, _, _, h1 = dummy_draw.textbbox((0, 0), text_line1, font=font_header)
             
-            # 給予足夠的 Header 高度
-            header_h = int(text_h + (header_padding_y * 1.5))
+            # 估算總高度：3行 * 行高 + 上下 padding
+            # 為避免字重疊，每行高度取 max(h1, line_height)
+            single_line_h = max(h1, line_height)
+            header_h = header_padding_top + (single_line_h * 3) + header_padding_bottom + int(10 * scale)
             
             # 建立新畫布
             canvas = Image.new("RGB", (W, H + header_h), (255, 255, 255))
+            draw = ImageDraw.Draw(canvas)
             
             # 繪製 Header 文字
-            draw = ImageDraw.Draw(canvas)
-            # 靠左，留點邊距
-            draw.text((padding_base, header_padding_y // 2), header_text, fill=(0, 0, 0), font=font_header)
+            # Line 1
+            y1 = header_padding_top
+            draw.text((padding_base, y1), text_line1, fill=(0, 0, 0), font=font_header)
+            
+            # Line 2 (A) - 使用紅色強調 A
+            y2 = y1 + single_line_h
+            draw.text((padding_base, y2), text_line2, fill=(0, 0, 0), font=font_header)
+            
+            # Line 3 (B) - 使用紅色強調 B
+            y3 = y2 + single_line_h
+            draw.text((padding_base, y3), text_line3, fill=(0, 0, 0), font=font_header)
+            
+            # 貼上地圖
             
             # 貼上地圖 (在 Header 下方)
             canvas.paste(base, (0, header_h))
