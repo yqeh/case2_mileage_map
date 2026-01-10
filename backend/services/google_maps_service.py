@@ -10,7 +10,9 @@ from dotenv import load_dotenv
 from datetime import datetime
 from utils.path_manager import get_temp_maps_dir
 from pathlib import Path
+import math
 from PIL import Image, ImageDraw, ImageFont
+import textwrap
 
 load_dotenv()
 
@@ -497,9 +499,20 @@ class GoogleMapsService:
             from urllib.parse import quote
 
             url_parts = []
-            url_parts.append("size=1200x800")
             url_parts.append("maptype=roadmap")
             url_parts.append("format=png")
+
+            # 計算合適的 zoom 和 center
+            W, H = 1200, 800
+            zoom, center_lat, center_lng = self._choose_zoom_for_two_points(
+                origin_geo["lat"], origin_geo["lng"],
+                destination_geo["lat"], destination_geo["lng"],
+                W, H, padding_px=120
+            )
+
+            url_parts.append(f"size={W}x{H}")
+            url_parts.append(f"zoom={zoom}")
+            url_parts.append(f"center={center_lat},{center_lng}")
 
             # 主路線：只畫線（不使用 fillcolor）
             main_path = f"color:0x4285F4|weight:6|enc:{polyline}"
@@ -549,11 +562,25 @@ class GoogleMapsService:
                 f.write(response.content)
 
             # 加註：公里數 + A/B 地址（formatted address）+ 系統產出時間
+            # 加註：公里數 + A/B 地址（formatted address）+ 系統產出時間
+            # 1. 先加整體資訊（km + 右下時間）
             self.annotate_map_info(
                 str(output_path),
                 distance_km,
                 origin_geo.get("formatted_address", origin_address),
                 destination_geo.get("formatted_address", destination_address),
+            )
+
+            # 2. 再加：A/B marker 旁邊的地址（貼近點）
+            self._annotate_ab_near_markers(
+                str(output_path),
+                origin_geo["lat"], origin_geo["lng"],
+                destination_geo["lat"], destination_geo["lng"],
+                origin_geo.get("formatted_address", origin_address),
+                destination_geo.get("formatted_address", destination_address),
+                zoom=zoom,
+                center_lat=center_lat,
+                center_lng=center_lng,
             )
 
             logger.info(f"成功下載 Google Maps 官方樣式靜態地圖: {str(output_path)}")
