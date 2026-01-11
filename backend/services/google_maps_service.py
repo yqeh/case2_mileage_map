@@ -532,8 +532,8 @@ class GoogleMapsService:
             origin_marker = f"color:0xFF0000|label:A|{origin_geo['lat']},{origin_geo['lng']}"
             url_parts.append(f"markers={quote(origin_marker)}")
 
-            # 終點：紅色標記，標籤 B
-            destination_marker = f"color:0xFF0000|label:B|{destination_geo['lat']},{destination_geo['lng']}"
+            # 終點：綠色標記，標籤 B
+            destination_marker = f"color:0x00FF00|label:B|{destination_geo['lat']},{destination_geo['lng']}"
             url_parts.append(f"markers={quote(destination_marker)}")
 
             url_parts.append(f"key={self.api_key}")
@@ -753,20 +753,38 @@ class GoogleMapsService:
         """
         手動繪製 A/B 點 Marker (確保一定看得到)
         """
-        # 圓點半徑
-        r = 12
+        # 圓點半徑（增大以更明顯）
+        r = 15
 
-        # A: 紅色 (起點)
-        draw.ellipse((ax - r, ay - r, ax + r, ay + r), fill=(255, 0, 0, 255), outline=(255, 255, 255, 255), width=3)
-        # B: 綠色 (終點)
-        draw.ellipse((bx - r, by - r, bx + r, by + r), fill=(0, 180, 0, 255), outline=(255, 255, 255, 255), width=3)
+        # A: 紅色 (起點) - 外圈陰影
+        draw.ellipse((ax - r - 2, ay - r - 2, ax + r + 2, ay + r + 2), fill=(0, 0, 0, 100))
+        # A: 紅色圓點
+        draw.ellipse((ax - r, ay - r, ax + r, ay + r), fill=(255, 0, 0, 255), outline=(255, 255, 255, 255), width=4)
         
-        # 在圓點中間畫上 A / B 文字 (選擇性)
-        font_marker = ImageFont.load_default()
-        # 簡單置中 A
-        draw.text((ax-3, ay-5), "A", fill=(255,255,255), font=font_marker)
-        # 簡單置中 B
-        draw.text((bx-3, by-5), "B", fill=(255,255,255), font=font_marker)
+        # B: 綠色 (終點) - 外圈陰影
+        draw.ellipse((bx - r - 2, by - r - 2, bx + r + 2, by + r + 2), fill=(0, 0, 0, 100))
+        # B: 綠色圓點
+        draw.ellipse((bx - r, by - r, bx + r, by + r), fill=(0, 200, 0, 255), outline=(255, 255, 255, 255), width=4)
+        
+        # 在圓點中間畫上 A / B 文字（使用更大更粗的字體）
+        try:
+            # 嘗試載入較大的字體
+            font_marker = self._load_cjk_font(16)
+        except:
+            font_marker = ImageFont.load_default()
+        
+        # 計算文字位置（置中）
+        # A 文字
+        a_bbox = draw.textbbox((0, 0), "A", font=font_marker)
+        a_w = a_bbox[2] - a_bbox[0]
+        a_h = a_bbox[3] - a_bbox[1]
+        draw.text((ax - a_w/2, ay - a_h/2), "A", fill=(255, 255, 255, 255), font=font_marker)
+        
+        # B 文字
+        b_bbox = draw.textbbox((0, 0), "B", font=font_marker)
+        b_w = b_bbox[2] - b_bbox[0]
+        b_h = b_bbox[3] - b_bbox[1]
+        draw.text((bx - b_w/2, by - b_h/2), "B", fill=(255, 255, 255, 255), font=font_marker)
 
     def _annotate_ab_near_markers(self, image_path: str, a_lat, a_lng, b_lat, b_lng, a_addr: str, b_addr: str,
                                   zoom: int, center_lat: float, center_lng: float):
@@ -801,9 +819,9 @@ class GoogleMapsService:
             # 1. 先畫 A/B 圓點（不靠 Google markers）
             self._draw_ab_markers(draw, ax, ay, bx, by)
 
-            # 2. 再畫 A/B 地址框
-            a_text = f"A點：{a_addr}"
-            b_text = f"B點：{b_addr}"
+            # 2. 再畫 A/B 地址框（確保文字清晰可見）
+            a_text = f"A點（起點）：{a_addr}"
+            b_text = f"B點（終點）：{b_addr}"
 
             # 預設放右上（避免壓到 marker），如果超出邊界就換位置
             def place_box(px, py, text, prefer="right"):
