@@ -243,83 +243,39 @@ class GoogleMapsService:
         clean_text = clean_text.replace("&quot;", '"')
         return clean_text.strip()
 
-    # =========================
-    # NEW: map annotation (km + A/B formatted address + generated time)
-    # =========================
-    def _resource_path(self, rel: str) -> str:
-        """
-        Get absolute path to resource, works for dev and for PyInstaller
-        """
-        try:
-            # PyInstaller creates a temp folder and stores path in _MEIPASS
-            base_path = sys._MEIPASS
-        except Exception:
-            base_path = os.path.dirname(__file__)
-            # Adjust if we are in backend/services to go up to backend/
-            # specific logic depends on where 'assets' is relative to this file
-            # Current structure: backend/services/google_maps_service.py
-            # Assets: backend/assets
-            base_path = str(Path(__file__).parent.parent)
-
-        return os.path.join(base_path, rel)
-
     def _load_cjk_font(self, size: int):
         from PIL import ImageFont
         import os
 
-        # Candidates (Priority Order)
-        candidates = []
+        # Candidates (Priority: Bundled -> System)
+        candidates = [
+            self._resource_path("assets/fonts/NotoSansTC-Regular.ttf"),
+            self._resource_path("assets/fonts/NotoSansCJKtc-Regular.otf"),
+            self._resource_path("assets/fonts/msjh.ttc"),
+        ]
 
-        # 1. Project Bundled Fonts (Robust Path)
-        candidates.append(self._resource_path("assets/fonts/NotoSansTC-Regular.ttf"))
-        candidates.append(self._resource_path("assets/fonts/NotoSansCJKtc-Regular.otf"))
-        candidates.append(self._resource_path("assets/fonts/msjh.ttc"))
-        
-        # 2. Windows System Fonts
+        # Windows System Fonts fallback
         if os.name == "nt":
             win = os.environ.get("WINDIR", "C:/Windows")
             candidates += [
                 os.path.join(win, "Fonts", "msjh.ttc"),
-                os.path.join(win, "Fonts", "msjhbd.ttc"),
                 os.path.join(win, "Fonts", "kaiu.ttf"),
-                os.path.join(win, "Fonts", "simsun.ttc"),
-                os.path.join(win, "Fonts", "arial.ttf"), # Fallback (no CJK)
-            ]
-            local = os.environ.get("LOCALAPPDATA", "")
-            if local:
-                 candidates.append(os.path.join(local, "Microsoft", "Windows", "Fonts", "msjh.ttc"))
-        
-        # 3. Linux / Render System Fonts
-        else:
-            candidates += [
-                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                "/usr/share/fonts/opentype/noto/NotoSansCJKtc-Regular.otf",
-                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-                "/usr/share/fonts/truetype/noto/NotoSansTC-Regular.ttf",
-                "/usr/share/fonts/truetype/noto/NotoSansTC-Regular.otf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", # Fallback
             ]
 
         for fp in candidates:
             if fp and os.path.exists(fp):
                 try:
-                    font = None
+                    logger.info(f"[FONT] Using: {fp}")
                     if fp.lower().endswith('.ttc'):
                         try:
-                            font = ImageFont.truetype(fp, size, index=0)
+                            return ImageFont.truetype(fp, size, index=0)
                         except:
-                            font = ImageFont.truetype(fp, size, index=1)
-                    else:
-                        font = ImageFont.truetype(fp, size)
-                    
-                    if font:
-                        logger.info(f"[FONT] Loaded CJK font successfully: {fp}")
-                        return font
+                            return ImageFont.truetype(fp, size, index=1)
+                    return ImageFont.truetype(fp, size)
                 except Exception as e:
-                    logger.warning(f"[FONT] Failed to load {fp}: {e}")
-                    continue
+                    logger.warning(f"[FONT] Failed: {fp} err={e}")
 
-        logger.error("[FONT] No CJK font found in candidates! Using default (may show tofu).")
+        logger.error("[FONT] No CJK font found, fallback default")
         return ImageFont.load_default()
 
     def annotate_map_info(self, image_path: str, distance_km, origin_addr: str, dest_addr: str, round_trip_km=None, date_text=None):
@@ -419,9 +375,21 @@ class GoogleMapsService:
             
             # 計算包圍盒
             dummy = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-            bbox = dummy.textmultilinebbox((0, 0), full_text, font=font_addr, spacing=4)
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
+            
+            # Fix for Pillow on Render (no textmultilinebbox)
+            lines = full_text.split("\n")
+            line_spacing = 4
+            
+            # Measure single line height
+            line_h = dummy.textbbox((0, 0), "測", font=font_addr)[3]
+            
+            max_w = 0
+            for ln in lines:
+                bb = dummy.textbbox((0, 0), ln, font=font_addr)
+                max_w = max(max_w, bb[2] - bb[0])
+            
+            text_w = max_w
+            text_h = line_h * len(lines) + line_spacing * (len(lines) - 1)
             
             box_w = text_w + int(30 * scale)
             box_h = text_h + int(30 * scale)
