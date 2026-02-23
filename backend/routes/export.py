@@ -1,6 +1,8 @@
 """
 匯出功能路由
 """
+from __future__ import annotations
+
 from flask import Blueprint, request, jsonify, send_file
 from services.excel_service import ExcelService
 from services.word_service import WordService
@@ -11,6 +13,7 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from io import BytesIO
 from datetime import datetime
 from utils.path_manager import get_output_dir
+from utils.log_sanitizer import sanitize_filename, sanitize_log_input
 from pathlib import Path
 import os
 
@@ -134,56 +137,125 @@ def export_word_batch():
         ZIP 壓縮檔（包含所有 Word 檔案）
     """
     try:
-        data = request.get_json()
-        projects = data.get('projects', {})
+        data = request.get_json() or {}
+        projects = data.get("projects") or {}
         fixed_origin = data.get('fixed_origin', '')
-        
+
+        def is_self_drive(record: dict) -> bool:
+            """
+            判斷是否勾選自駕（支援多種欄位命名）。
+            """
+            keys = [
+                "IsDriving",
+                "是否自駕",
+                "自駕",
+                "is_self_drive",
+                "self_drive",
+                "selfDrive",
+            ]
+            for key in keys:
+                if key not in record:
+                    continue
+                v = record.get(key)
+                if isinstance(v, bool):
+                    return v
+                if v is None:
+                    continue
+                s = str(v).strip().lower()
+                if s in {"y", "yes", "true", "1", "是"}:
+                    return True
+                if s in {"n", "no", "false", "0", "否"}:
+                    return False
+            return False
+
+        def get_project_name(record: dict) -> str:
+            return (
+                record.get("計畫別")
+                or record.get("project_name")
+                or record.get("ProjectName")
+                or "未分類"
+            )
+
+        grouped: dict[str, list[dict]] = {}
+
+        # 兼容：如果前端送來的是平坦 records，就在後端分組
         if not projects:
-            return jsonify({
-                'status': 'error',
-                'message': '沒有資料可匯出'
-            }), 400
-        
-        # 產生所有 Word 報表
-        word_files = []
-        for project_name, records in projects.items():
+            records = data.get("records") or []
+            if not isinstance(records, list) or not records:
+                return jsonify({"status": "error", "message": "沒有資料可匯出"}), 400
+
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                project_name = get_project_name(record)
+                grouped.setdefault(project_name, []).append(record)
+        else:
+            # projects 格式：{project_name: [records...]}
+            for project_name, records in projects.items():
+                if not isinstance(records, list):
+                    continue
+                grouped.setdefault(project_name or "未分類", []).extend(
+                    [r for r in records if isinstance(r, dict)]
+                )
+
+        # 只輸出「有勾選自駕」的紀錄
+        grouped_self_drive: dict[str, list[dict]] = {}
+        for project_name, records in grouped.items():
+            selected = [r for r in records if is_self_drive(r)]
+            if selected:
+                grouped_self_drive[project_name] = selected
+
+        if not grouped_self_drive:
+            return jsonify(
+                {"status": "error", "message": "沒有勾選自駕的資料可匯出"}
+            ), 400
+
+        # 產生每個計畫別的 Word 報表
+        docx_paths: list[tuple[str, str]] = []
+        for project_name, records in grouped_self_drive.items():
             try:
-                word_path = word_service.generate_report(project_name, records, fixed_origin)
-                word_files.append({
-                    'path': word_path,
-                    'name': os.path.basename(word_path)
-                })
+                word_path = word_service.generate_report(
+                    project_name, records, fixed_origin
+                )
+                arc_name = sanitize_filename(f"{project_name}_里程報表.docx") or "未分類_里程報表.docx"
+                docx_paths.append((word_path, arc_name))
             except Exception as e:
-                logger.error(f"產生 {project_name} 報表錯誤: {str(e)}")
+                safe_project_name = sanitize_log_input(project_name)
+                logger.error(f"產生 {safe_project_name} 報表錯誤: {str(e)}")
                 continue
-        
-        if not word_files:
-            return jsonify({
-                'status': 'error',
-                'message': '無法產生任何報表'
-            }), 500
-        
-        # 建立 ZIP 壓縮檔（使用相對路徑）
+
+        if not docx_paths:
+            return jsonify({"status": "error", "message": "無法產生任何報表"}), 500
+
+        # 建立 ZIP 壓縮檔（UTF-8 檔名）
         import zipfile
-        from datetime import datetime
-        
+
         output_dir = get_output_dir()
-        
-        zip_filename = f"里程報表_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
-        zip_path = output_dir / zip_filename
-        
-        with zipfile.ZipFile(str(zip_path), 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for word_file in word_files:
-                zipf.write(word_file['path'], word_file['name'])
-        
-        logger.info(f"成功產生 ZIP 壓縮檔: {zip_path}, 包含 {len(word_files)} 個 Word 檔案")
-        
-        # 回傳 ZIP 檔案
+        zip_filename = f"里程報表_{datetime.now().strftime('%Y%m%d_%H%M')}.zip"
+        zip_path = Path(output_dir) / zip_filename
+
+        used_names: set[str] = set()
+        with zipfile.ZipFile(str(zip_path), "w", zipfile.ZIP_DEFLATED) as zipf:
+            for path, arc_name in docx_paths:
+                name = arc_name
+                if name in used_names:
+                    stem, ext = os.path.splitext(name)
+                    i = 2
+                    while f"{stem}_{i}{ext}" in used_names:
+                        i += 1
+                    name = f"{stem}_{i}{ext}"
+                used_names.add(name)
+                zipf.write(path, name)
+
+        logger.info(
+            f"成功產生 ZIP 壓縮檔: {zip_path}, 包含 {len(docx_paths)} 個 Word 檔案"
+        )
+
         return send_file(
             zip_path,
             as_attachment=True,
             download_name=zip_filename,
-            mimetype='application/zip'
+            mimetype="application/zip",
         )
         
     except Exception as e:
