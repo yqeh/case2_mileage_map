@@ -197,18 +197,10 @@ def export_word_batch():
                 grouped.setdefault(project_name or "未分類", []).extend(
                     [r for r in records if isinstance(r, dict)]
                 )
-
-        # 只輸出「有勾選自駕」的紀錄
-        grouped_self_drive: dict[str, list[dict]] = {}
-        for project_name, records in grouped.items():
-            selected = [r for r in records if is_self_drive(r)]
-            if selected:
-                grouped_self_drive[project_name] = selected
+        grouped_self_drive = grouped
 
         if not grouped_self_drive:
-            return jsonify(
-                {"status": "error", "message": "沒有勾選自駕的資料可匯出"}
-            ), 400
+            return jsonify({"status": "error", "message": "沒有資料可匯出"}), 400
 
         # 產生每個計畫別的 Word 報表
         docx_paths: list[tuple[str, str]] = []
@@ -288,7 +280,8 @@ def export_template():
             '起點名稱',
             '出差日期時間（開始）',
             '出差日期時間（結束）',
-            '目的地名稱'
+            '目的地名稱',
+            '連結'
         ]
         
         # 設定標題列樣式
@@ -314,7 +307,8 @@ def export_template():
             '安環高雄處',
             '2024-10-22T09:00:00',  # ISO 格式
             '2024-10-22T17:00:00',  # ISO 格式
-            '經濟部產業園區管理局'
+            '經濟部產業園區管理局',
+            'https://www.google.com/maps/dir/813高雄市左營區博愛三路12號/經濟部產業園區管理局+811高雄市楠梓區加昌路600號/'
         ]
         
         for col_idx, value in enumerate(example_data, start=1):
@@ -329,7 +323,8 @@ def export_template():
             'D': 25,  # 起點名稱
             'E': 25,  # 出差日期時間（開始）
             'F': 25,  # 出差日期時間（結束）
-            'G': 30   # 目的地名稱
+            'G': 30,  # 目的地名稱
+            'H': 80   # 連結
         }
         
         for col, width in column_widths.items():
