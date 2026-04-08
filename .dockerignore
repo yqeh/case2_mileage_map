@@ -1,0 +1,14 @@
+﻿.git
+.gitignore
+.idea
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+backend/logs/
+backend/output/
+backend/temp/
+backend/__pycache__/
+backend/tests/__pycache__/
+backend/mileage_map.db

@@ -1,0 +1,946 @@
+"""
+Google Maps API 服務
+"""
+import googlemaps
+import requests
+import os
+import re
+from loguru import logger
+from dotenv import load_dotenv
+from datetime import datetime
+from utils.path_manager import get_temp_maps_dir
+from pathlib import Path
+import math
+from PIL import Image, ImageDraw, ImageFont
+import textwrap
+import sys
+
+load_dotenv()
+
+
+class GoogleMapsService:
+    """Google Maps API 服務類別"""
+
+    def __init__(self):
+        self.api_key = os.getenv("GOOGLE_MAPS_API_KEY", "")
+        self.gmaps = None
+        if self.api_key:
+            try:
+                self.gmaps = googlemaps.Client(key=self.api_key)
+            except Exception as e:
+                logger.error(f"初始化 Google Maps 客戶端錯誤: {str(e)}")
+
+    def calculate_distance(self, origin, destination, route_type="driving"):
+        """
+        計算距離
+        """
+        try:
+            if not self.gmaps:
+                return {"success": False, "error": "Google Maps API Key 未設定"}
+
+            directions_result = self.gmaps.directions(
+                origin,
+                destination,
+                mode=route_type,
+                language="zh-TW",
+            )
+
+            if not directions_result:
+                return {"success": False, "error": "無法計算路線，請檢查地址是否正確"}
+
+            route = directions_result[0]
+            leg = route["legs"][0]
+
+            distance_km = leg["distance"]["value"] / 1000
+            duration_text = leg["duration"]["text"]
+            duration_seconds = leg["duration"]["value"]
+
+            navigation_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}"
+
+            return {
+                "success": True,
+                "one_way_km": round(distance_km, 2),
+                "round_trip_km": round(distance_km * 2, 2),
+                "estimated_time": duration_text,
+                "estimated_seconds": duration_seconds,
+                "navigation_url": navigation_url,
+                "route": route,
+            }
+
+        except Exception as e:
+            logger.error(f"計算距離錯誤: {str(e)}")
+            return {"success": False, "error": f"計算距離失敗: {str(e)}"}
+
+    def download_static_map(self, origin, destination, output_path=None):
+        """
+        下載靜態地圖圖片（簡易版）
+        """
+        try:
+            if not self.api_key:
+                return None
+
+            origin_geo = self.geocode(origin)
+            destination_geo = self.geocode(destination)
+
+            if not origin_geo or not destination_geo:
+                logger.warning(f"無法取得地理座標: {origin} -> {destination}")
+                return None
+
+            static_map_url = (
+                f"https://maps.googleapis.com/maps/api/staticmap?"
+                f"size=800x600&"
+                f"markers=color:red|label:S|{origin_geo['lat']},{origin_geo['lng']}&"
+                f"markers=color:green|label:E|{destination_geo['lat']},{destination_geo['lng']}&"
+                f"path=color:0x0000ff|weight:5|{origin_geo['lat']},{origin_geo['lng']}|{destination_geo['lat']},{destination_geo['lng']}&"
+                f"key={self.api_key}"
+            )
+
+            response = requests.get(static_map_url, timeout=30)
+            if response.status_code != 200:
+                logger.error(f"下載靜態地圖失敗: HTTP {response.status_code}")
+                return None
+
+            if not output_path:
+                maps_dir = get_temp_maps_dir()
+                filename = f"map_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{hash(origin + destination) % 10000}.png"
+                output_path = maps_dir / filename
+
+            with open(str(output_path), "wb") as f:
+                f.write(response.content)
+
+            logger.info(f"成功下載靜態地圖: {str(output_path)}")
+            return str(output_path)
+
+        except Exception as e:
+            logger.error(f"下載靜態地圖錯誤: {str(e)}")
+            return None
+
+    def geocode(self, address):
+        """
+        地址地理編碼
+        """
+        try:
+            if not self.gmaps:
+                return None
+
+            geocode_result = self.gmaps.geocode(address, language="zh-TW")
+            if geocode_result:
+                location = geocode_result[0]["geometry"]["location"]
+                return {
+                    "lat": location["lat"],
+                    "lng": location["lng"],
+                    "formatted_address": geocode_result[0]["formatted_address"],
+                }
+
+            return None
+
+        except Exception as e:
+            logger.error(f"地理編碼錯誤: {str(e)}")
+            return None
+
+    def resolve_place_name(self, place_name, place_address_map):
+        """
+        解析地點名稱對應地址
+        """
+        try:
+            if place_name in place_address_map:
+                return place_address_map[place_name]
+
+            geocode_result = self.geocode(place_name)
+            if geocode_result:
+                return geocode_result["formatted_address"]
+
+            return None
+
+        except Exception as e:
+            logger.error(f"解析地點名稱錯誤: {str(e)}")
+            return None
+
+    def get_route_detail(self, origin_address, dest_address, alternatives=True):
+        """
+        取得詳細路線導航資訊（包含主要路線和替代路線）
+        """
+        try:
+            if not self.gmaps:
+                return {"success": False, "error": "Google Maps API Key 未設定"}
+
+            directions_result = self.gmaps.directions(
+                origin_address,
+                dest_address,
+                mode="driving",
+                language="zh-TW",
+                alternatives=alternatives,
+            )
+
+            if not directions_result:
+                return {"success": False, "error": "無法取得路線，請檢查地址是否正確"}
+
+            main_route = directions_result[0]
+            main_leg = main_route["legs"][0]
+
+            distance_km = main_leg["distance"]["value"] / 1000
+
+            duration_text = main_leg["duration"]["text"]
+            duration_seconds = main_leg["duration"]["value"]
+
+            main_polyline = main_route["overview_polyline"]["points"]
+
+            alternative_polylines = []
+            if len(directions_result) > 1:
+                for alt_route in directions_result[1:]:
+                    if "overview_polyline" in alt_route:
+                        alternative_polylines.append(alt_route["overview_polyline"]["points"])
+
+            steps = []
+            for step in main_leg["steps"]:
+                html_instructions = step.get("html_instructions", "")
+                clean_instruction = self._clean_html_tags(html_instructions)
+                distance_text = step["distance"]["text"]
+                step_desc = f"{clean_instruction} ({distance_text})"
+                steps.append(step_desc)
+
+            from urllib.parse import quote
+            origin_encoded = quote(origin_address)
+            dest_encoded = quote(dest_address)
+            map_url = (
+                f"https://www.google.com/maps/dir/?api=1"
+                f"&origin={origin_encoded}"
+                f"&destination={dest_encoded}"
+                f"&travelmode=driving"
+            )
+
+            route_steps_text = "\n".join([f"{i+1}. {s}" for i, s in enumerate(steps)])
+
+            return {
+                "success": True,
+                "distance_km": round(distance_km, 2),
+                "round_trip_km": round(distance_km * 2, 2),
+                "estimated_time": duration_text,
+                "estimated_seconds": duration_seconds,
+                "steps": steps,
+                "step_count": len(steps),
+                "polyline": main_polyline,
+                "alternative_polylines": alternative_polylines,
+                "map_url": map_url,
+                "route_steps_text": route_steps_text,
+            }
+
+        except Exception as e:
+            logger.error(f"取得路線詳情錯誤: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {"success": False, "error": f"取得路線詳情失敗: {str(e)}"}
+
+    def _clean_html_tags(self, html_text):
+        """
+        清除 HTML 標籤
+        """
+        clean_text = re.sub(r"<[^>]+>", "", html_text)
+        clean_text = clean_text.replace("&nbsp;", " ")
+        clean_text = clean_text.replace("&amp;", "&")
+        clean_text = clean_text.replace("&lt;", "<")
+        clean_text = clean_text.replace("&gt;", ">")
+        clean_text = clean_text.replace("&quot;", '"')
+        return clean_text.strip()
+
+    def _load_cjk_font(self, size: int):
+        """
+        載入支援中文（CJK）的字體
+        參考 matplotlib 的方式，明確指定字體路徑
+        """
+        from PIL import ImageFont
+        import os
+
+        # 將路徑轉換為絕對路徑，確保路徑正確
+        def get_absolute_path(path):
+            """將路徑轉換為絕對路徑"""
+            if not path:
+                return None
+            try:
+                abs_path = os.path.abspath(str(path))
+                return abs_path if os.path.exists(abs_path) else None
+            except:
+                return None
+
+        # Assets 字體目錄（專案內字體）- 使用 resolve() 確保在 Render 環境可解析
+        assets_fonts_dir = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+        
+        # 專案內字體（永遠優先，不依賴系統字體）
+        project_fonts = [
+            str(assets_fonts_dir / "NotoSansTC-Regular.ttf"),
+        ]
+        project_fonts = [get_absolute_path(fp) for fp in project_fonts if get_absolute_path(fp)]
+        
+        # 系統字體（備選，僅在專案字體不存在時使用）
+        system_candidates = []
+        
+        if os.name == "nt":
+            # Windows 系統字體
+            win = os.environ.get("WINDIR", "C:/Windows")
+            fonts_dir = os.path.join(win, "Fonts")
+            
+            # Windows 中文字體候選項
+            system_candidates = [
+                os.path.join(fonts_dir, "msjh.ttc"),      # 微軟正黑體
+                os.path.join(fonts_dir, "msjhbd.ttc"),     # 微軟正黑體粗體
+                os.path.join(fonts_dir, "mingliu.ttc"),    # 新細明體
+                os.path.join(fonts_dir, "kaiu.ttf"),       # 標楷體
+                os.path.join(fonts_dir, "simsun.ttc"),    # 宋體
+                os.path.join(fonts_dir, "simsun.ttf"),    # 宋體
+                os.path.join(fonts_dir, "msyh.ttc"),       # 微軟雅黑
+                os.path.join(fonts_dir, "msyhbd.ttc"),    # 微軟雅黑粗體
+            ]
+        else:
+            # Linux / 其他系統字體（Render 環境通常沒有，但保留作為備選）
+            system_candidates = [
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/opentype/noto/NotoSansCJKtc-Regular.otf",
+                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/truetype/noto/NotoSansTC-Regular.ttf",
+                "/usr/share/fonts/truetype/noto/NotoSansTC-Regular.otf",
+            ]
+        
+        # 轉換為絕對路徑並過濾不存在的路徑
+        system_candidates = [get_absolute_path(fp) for fp in system_candidates if get_absolute_path(fp)]
+        
+        # 專案字體永遠優先於系統字體
+        candidates = project_fonts + system_candidates
+
+        # 移除 None 值
+        candidates = [fp for fp in candidates if fp is not None]
+
+        # 嘗試載入字體（使用絕對路徑）
+        loaded_font = None
+        for fp in candidates:
+            try:
+                logger.info(f"[FONT] 嘗試載入字體: {fp}")
+                
+                if fp.lower().endswith('.ttc'):
+                    # TTC 檔案可能包含多個字體，嘗試不同索引
+                    for idx in [0, 1, 2]:
+                        try:
+                            # 使用絕對路徑明確指定字體
+                            loaded_font = ImageFont.truetype(fp, size, index=idx)
+                            # 測試字體是否能正確顯示中文
+                            test_draw = ImageDraw.Draw(Image.new("RGB", (100, 100)))
+                            test_bbox = test_draw.textbbox((0, 0), "測試", font=loaded_font)
+                            if test_bbox[2] > test_bbox[0]:  # 確保文字寬度 > 0
+                                logger.info(f"[FONT] ✓ 成功載入字體: {fp} (index={idx}, size={size})")
+                                break
+                        except Exception as e:
+                            if idx == 2:  # 最後一個索引也失敗
+                                logger.debug(f"[FONT] 無法載入 TTC 字體 {fp} (index={idx}): {e}")
+                            continue
+                    if loaded_font:
+                        break
+                else:
+                    # TTF/OTF 檔案
+                    loaded_font = ImageFont.truetype(fp, size)
+                    # 測試字體是否能正確顯示中文
+                    test_draw = ImageDraw.Draw(Image.new("RGB", (100, 100)))
+                    test_bbox = test_draw.textbbox((0, 0), "測試", font=loaded_font)
+                    if test_bbox[2] > test_bbox[0]:  # 確保文字寬度 > 0
+                        logger.info(f"[FONT] ✓ 成功載入字體: {fp} (size={size})")
+                        break
+                    else:
+                        loaded_font = None
+                        
+            except Exception as e:
+                logger.debug(f"[FONT] 載入字體失敗 {fp}: {e}")
+                continue
+
+        if loaded_font:
+            return loaded_font
+
+        # 如果所有候選字體都失敗，記錄錯誤並拋出異常
+        logger.error("[FONT] ✗ 無法載入任何中文字體！中文字將無法正確顯示。")
+        logger.error(f"[FONT] 已嘗試的候選字體數量: {len(candidates)}")
+        if candidates:
+            logger.error(f"[FONT] 第一個候選字體: {candidates[0]}")
+        if project_fonts:
+            logger.error(f"[FONT] 專案字體路徑: {project_fonts[0]}")
+            logger.error(f"[FONT] 專案字體檔案是否存在: {os.path.exists(project_fonts[0]) if project_fonts[0] else 'N/A'}")
+        
+        # 不使用預設字體（因為不支援中文），改為拋出異常
+        # 讓調用者知道字體載入失敗，避免靜默失敗
+        raise RuntimeError(
+            f"無法載入中文字體！請確認專案字體檔案存在於: {assets_fonts_dir / 'NotoSansTC-Regular.ttf'}"
+        )
+
+    def annotate_map_info(self, image_path: str, distance_km, origin_addr: str, dest_addr: str, round_trip_km=None, date_text=None):
+        """
+        產生符合使用者需求的「報表型」地圖：
+        1. 頂部 Header：日期 + 起點 + 終點 + 往返核銷里程
+        2. 地圖左上角 Badge：單程公里數 (紅字白底)
+        """
+        try:
+            # 確保內容是字串
+            origin_addr = str(origin_addr).replace("台灣", "") if origin_addr else "" # 移除重複的台灣若有
+            # 簡單優化地址顯示
+            if origin_addr.startswith("號"): origin_addr = origin_addr[1:]
+            
+            dest_addr = str(dest_addr).replace("台灣", "") if dest_addr else ""
+            
+            # 日期處理
+            date_str = ""
+            if date_text:
+                try:
+                    # 嘗試解析日期字串，格式化為 MM/DD
+                    # 假設輸入可能是 YYYY-MM-DD 或 YYYY/MM/DD
+                    dt = None
+                    for fmt in ["%Y-%m-%d", "%Y/%m/%d", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S"]:
+                        try:
+                            dt = datetime.strptime(str(date_text).split(' ')[0], fmt)
+                            break
+                        except ValueError:
+                            continue
+                    if dt:
+                        date_str = dt.strftime("%m/%d")
+                    else:
+                        date_str = str(date_text)
+                except:
+                    date_str = str(date_text)
+            
+            # 若無日期，使用當日
+            if not date_str:
+                date_str = datetime.now().strftime("%m/%d")
+
+            base = Image.open(image_path).convert("RGB")
+            W, H = base.size
+
+            # 計算縮放比例（以 1000px 為基準）
+            scale = max(W / 1000.0, 0.8)
+            
+            # 刪除舊的 Header 邏輯，改用 Overlay
+            # 建立可繪圖物件 (直接在地圖圖層上畫)
+            draw = ImageDraw.Draw(base, "RGBA") # 確保支援 alpha
+            
+            import textwrap
+
+            # -----------------------------------------------
+            # 1. 左上角 Badge (KM)
+            # -----------------------------------------------
+            if distance_km is not None:
+                km_text = f"{distance_km} km"
+                font_km = self._load_cjk_font(int(40 * scale))
+                
+                dummy = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+                bbox = dummy.textbbox((0, 0), km_text, font=font_km)
+                w = bbox[2] - bbox[0] + int(30 * scale)
+                h = bbox[3] - bbox[1] + int(20 * scale)
+                
+                x, y = int(20 * scale), int(20 * scale)
+                
+                # 陰影
+                draw.rounded_rectangle([x+2, y+2, x+w+2, y+h+2], radius=10, fill=(0,0,0,100))
+                # 白底
+                draw.rounded_rectangle([x, y, x+w, y+h], radius=10, fill=(255,255,255,230))
+                # 紅字
+                text_x = x + int(15 * scale)
+                text_y = y + int(10 * scale)
+                draw.text((text_x, text_y), km_text, fill=(200, 0, 0), font=font_km)
+
+            # -----------------------------------------------
+            # 2. 右下角 Timestamp
+            # -----------------------------------------------
+            # 格式：System Generated: YYYY/MM/DD HH:MM
+            ts_str = f"系統產出時間: {datetime.now().strftime('%Y/%m/%d %H:%M')}"
+            font_ts = self._load_cjk_font(int(20 * scale))
+            
+            bbox_ts = dummy.textbbox((0, 0), ts_str, font=font_ts)
+            ts_w = bbox_ts[2] - bbox_ts[0]
+            ts_h = bbox_ts[3] - bbox_ts[1]
+            
+            ts_x = W - ts_w - int(20 * scale)
+            ts_y = H - ts_h - int(20 * scale)
+            
+            # 加個白色暈開效果 (Halo) 增加可讀性
+            draw = ImageDraw.Draw(base) # RGB mode now
+            halo_r = 2
+            for ox in range(-halo_r, halo_r+1):
+                for oy in range(-halo_r, halo_r+1):
+                    draw.text((ts_x+ox, ts_y+oy), ts_str, font=font_ts, fill=(255,255,255))
+            
+            draw.text((ts_x, ts_y), ts_str, font=font_ts, fill=(50, 50, 50))
+
+            # 存檔
+            base.save(image_path)
+            logger.info("地圖已套用 Burn-in 樣式（KM + Address Overlay + Timestamp）")
+
+        except Exception as e:
+            logger.error(f"在地圖上標註 Header 資訊錯誤: {str(e)}")
+
+
+    def download_static_map_with_polyline(
+        self,
+        polyline,
+        origin_address,
+        destination_address,
+        distance_km=None,
+        output_path=None,
+        alternative_polylines=None,
+    ):
+        """
+        下載帶路線 polyline 的靜態地圖圖片（使用 Google Maps 官方樣式）
+        - 移除 fillcolor，避免出現藍色/灰色半透明面積
+        - 下載後用 PIL 加註：公里數 + A/B formatted address + 系統產出時間
+        """
+        try:
+            if not self.api_key:
+                return None
+
+            origin_geo = self.geocode(origin_address)
+            destination_geo = self.geocode(destination_address)
+
+            if not origin_geo or not destination_geo:
+                logger.warning(f"無法取得地理座標: {origin_address} -> {destination_address}")
+                return self._download_simple_static_map(
+                    polyline, origin_address, destination_address, distance_km, output_path
+                )
+
+            from urllib.parse import quote
+
+            url_parts = []
+            url_parts.append("maptype=roadmap")
+            url_parts.append("format=png")
+
+            # 計算合適的 zoom 和 center
+            W, H = 1200, 800
+            zoom, center_lat, center_lng = self._choose_zoom_for_two_points(
+                origin_geo["lat"], origin_geo["lng"],
+                destination_geo["lat"], destination_geo["lng"],
+                W, H, padding_px=120
+            )
+
+            url_parts.append(f"size={W}x{H}")
+            url_parts.append(f"zoom={zoom}")
+            url_parts.append(f"center={center_lat},{center_lng}")
+
+            # 主路線：只畫線（不使用 fillcolor）
+            main_path = f"color:0x4285F4|weight:6|enc:{polyline}"
+            url_parts.append(f"path={quote(main_path)}")
+
+            # 替代路線：只畫線（不使用 fillcolor）
+            if alternative_polylines:
+                for alt_polyline in alternative_polylines:
+                    alt_path = f"color:0x808080|weight:4|enc:{alt_polyline}"
+                    url_parts.append(f"path={quote(alt_path)}")
+
+            # 起點：紅色標記（不帶 label，由 _draw_ab_markers() 手動繪製）
+            origin_marker = f"color:0xFF0000|{origin_geo['lat']},{origin_geo['lng']}"
+            url_parts.append(f"markers={quote(origin_marker)}")
+
+            # 終點：綠色標記（不帶 label，由 _draw_ab_markers() 手動繪製）
+            destination_marker = f"color:0x00FF00|{destination_geo['lat']},{destination_geo['lng']}"
+            url_parts.append(f"markers={quote(destination_marker)}")
+
+            url_parts.append(f"key={self.api_key}")
+
+            static_map_url = f"https://maps.googleapis.com/maps/api/staticmap?{'&'.join(url_parts)}"
+            logger.debug(f"Static Maps API URL 長度: {len(static_map_url)} 字元")
+
+            response = requests.get(static_map_url, timeout=30)
+            if response.status_code != 200:
+                logger.error(f"下載靜態地圖失敗: HTTP {response.status_code}, Response: {response.text[:200]}")
+                return self._download_simple_static_map(
+                    polyline, origin_address, destination_address, distance_km, output_path
+                )
+
+            if not response.content.startswith(b"\x89PNG"):
+                error_text = response.text[:500] if hasattr(response, "text") else str(response.content[:200])
+                logger.error(f"下載的內容不是有效的 PNG 圖片: {error_text}")
+                return self._download_simple_static_map(
+                    polyline, origin_address, destination_address, distance_km, output_path
+                )
+
+            if not output_path:
+                maps_dir = get_temp_maps_dir()
+                filename = f"map_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{hash(origin_address + destination_address) % 10000}.png"
+                output_path = maps_dir / filename
+            else:
+                output_path = Path(output_path)
+
+            with open(str(output_path), "wb") as f:
+                f.write(response.content)
+
+            # 加註：公里數 + A/B 地址（formatted address）+ 系統產出時間
+            # 加註：公里數 + A/B 地址（formatted address）+ 系統產出時間
+            # 1. 先加整體資訊（km + 右下時間）
+            self.annotate_map_info(
+                str(output_path),
+                distance_km,
+                origin_geo.get("formatted_address", origin_address),
+                destination_geo.get("formatted_address", destination_address),
+            )
+
+            # 2. 再加：A/B marker 旁邊的地址（貼近點）
+            self._annotate_ab_near_markers(
+                str(output_path),
+                origin_geo["lat"], origin_geo["lng"],
+                destination_geo["lat"], destination_geo["lng"],
+                origin_geo.get("formatted_address", origin_address),
+                destination_geo.get("formatted_address", destination_address),
+                zoom=zoom,
+                center_lat=center_lat,
+                center_lng=center_lng,
+            )
+
+            logger.info(f"成功下載 Google Maps 官方樣式靜態地圖: {str(output_path)}")
+            return str(output_path)
+
+        except Exception as e:
+            logger.error(f"下載靜態地圖錯誤: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return self._download_simple_static_map(
+                polyline, origin_address, destination_address, distance_km, output_path
+            )
+
+    def _download_simple_static_map(self, polyline, origin_address, destination_address, distance_km=None, output_path=None):
+        """
+        回退方法：使用簡單的靜態地圖（當官方樣式失敗時使用）
+        也會加註：公里數 + A/B 地址 + 系統產出時間（確保一致）
+        """
+        try:
+            if not self.api_key:
+                return None
+
+            static_map_url = (
+                f"https://maps.googleapis.com/maps/api/staticmap?"
+                f"size=800x600&"
+                f"maptype=roadmap&"
+                f"path=enc:{polyline}&"
+                f"key={self.api_key}"
+            )
+
+            response = requests.get(static_map_url, timeout=30)
+            if response.status_code != 200:
+                logger.error(f"下載簡單靜態地圖失敗: HTTP {response.status_code}")
+                return None
+
+            if not output_path:
+                maps_dir = get_temp_maps_dir()
+                filename = f"map_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{hash(origin_address + destination_address) % 10000}.png"
+                output_path = maps_dir / filename
+            else:
+                output_path = Path(output_path)
+
+            with open(str(output_path), "wb") as f:
+                f.write(response.content)
+
+            # 嘗試拿 formatted address（沒有就用原字串）
+            origin_geo = self.geocode(origin_address) or {}
+            dest_geo = self.geocode(destination_address) or {}
+            origin_fmt = origin_geo.get("formatted_address", origin_address)
+            dest_fmt = dest_geo.get("formatted_address", destination_address)
+
+            self.annotate_map_info(str(output_path), distance_km, origin_fmt, dest_fmt)
+
+            logger.info(f"成功下載簡單靜態地圖: {str(output_path)}")
+            return str(output_path)
+
+        except Exception as e:
+            logger.error(f"下載簡單靜態地圖錯誤: {str(e)}")
+            return None
+       
+    # =========================
+    # Helpers for marker pixel + zoom + label box
+    # (fix: ensure _annotate_ab_near_markers always works)
+    # =========================
+    def _latlng_to_pixel(self, lat, lng, zoom, W, H, center_lat, center_lng):
+        """
+        Web Mercator: lat/lng -> image pixel (x,y) with given zoom and center.
+        """
+        # clamp latitude to mercator valid range
+        lat = max(min(float(lat), 85.05112878), -85.05112878)
+        lng = float(lng)
+
+        def project(lat_deg, lng_deg):
+            siny = math.sin(math.radians(lat_deg))
+            siny = min(max(siny, -0.9999), 0.9999)
+            x = 256.0 * (0.5 + lng_deg / 360.0)
+            y = 256.0 * (0.5 - math.log((1 + siny) / (1 - siny)) / (4 * math.pi))
+            scale = 2 ** int(zoom)
+            return x * scale, y * scale
+
+        cx, cy = project(center_lat, center_lng)
+        px, py = project(lat, lng)
+
+        # put center at canvas center
+        x = (px - cx) + (W / 2.0)
+        y = (py - cy) + (H / 2.0)
+        return x, y
+
+    def _choose_zoom_for_two_points(self, lat1, lng1, lat2, lng2, W, H, padding_px=120):
+        """
+        Choose a zoom that fits both points in the image (with padding).
+        Return: (zoom, center_lat, center_lng)
+        """
+        lat1, lng1 = float(lat1), float(lng1)
+        lat2, lng2 = float(lat2), float(lng2)
+
+        center_lat = (lat1 + lat2) / 2.0
+        center_lng = (lng1 + lng2) / 2.0
+
+        best_zoom = 15
+        for z in range(21, -1, -1):
+            x1, y1 = self._latlng_to_pixel(lat1, lng1, z, W, H, center_lat, center_lng)
+            x2, y2 = self._latlng_to_pixel(lat2, lng2, z, W, H, center_lat, center_lng)
+
+            minx, maxx = min(x1, x2), max(x1, x2)
+            miny, maxy = min(y1, y2), max(y1, y2)
+
+            if (
+                minx >= padding_px and maxx <= (W - padding_px)
+                and miny >= padding_px and maxy <= (H - padding_px)
+            ):
+                best_zoom = z
+                break
+
+        return best_zoom, center_lat, center_lng
+
+    def _draw_label_box(self, draw, text, x, y, font, max_width=480, padding=10, line_spacing=4):
+        """
+        Draw a rounded white label box with auto-wrapping by pixel width.
+        Return bbox: (l,t,r,b)
+        """
+        # pixel-based wrap (CJK safe)
+        lines = []
+        cur = ""
+        for ch in str(text):
+            test = cur + ch
+            bb = draw.textbbox((0, 0), test, font=font)
+            if (bb[2] - bb[0]) <= max_width:
+                cur = test
+            else:
+                if cur:
+                    lines.append(cur)
+                cur = ch
+        if cur:
+            lines.append(cur)
+
+        # measure line height
+        dummy = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+        line_h = (dummy.textbbox((0, 0), "測", font=font)[3]) + line_spacing
+
+        # measure max line width
+        max_line_w = 0
+        for ln in lines:
+            bb = dummy.textbbox((0, 0), ln, font=font)
+            max_line_w = max(max_line_w, bb[2] - bb[0])
+
+        text_h = line_h * len(lines) - line_spacing
+        box_w = max_line_w + padding * 2
+        box_h = text_h + padding * 2
+
+        l, t, r, b = int(x), int(y), int(x + box_w), int(y + box_h)
+
+        # shadow
+        draw.rounded_rectangle([l + 2, t + 2, r + 2, b + 2], radius=10, fill=(0, 0, 0, 80))
+        # white box
+        draw.rounded_rectangle([l, t, r, b], radius=10, fill=(255, 255, 255, 220))
+
+        ty = t + padding
+        for ln in lines:
+            draw.text((l + padding, ty), ln, font=font, fill=(0, 0, 0, 255))
+            ty += line_h
+
+        return (l, t, r, b)
+
+    def _draw_ab_markers(self, draw, ax, ay, bx, by):
+        """
+        手動繪製 A/B 點 Marker (確保一定看得到)
+        """
+        # 圓點半徑（增大以更明顯）
+        r = 15
+
+        # A: 紅色 (起點) - 外圈陰影
+        draw.ellipse((ax - r - 2, ay - r - 2, ax + r + 2, ay + r + 2), fill=(0, 0, 0, 100))
+        # A: 紅色圓點
+        draw.ellipse((ax - r, ay - r, ax + r, ay + r), fill=(255, 0, 0, 255), outline=(255, 255, 255, 255), width=4)
+        
+        # B: 綠色 (終點) - 外圈陰影
+        draw.ellipse((bx - r - 2, by - r - 2, bx + r + 2, by + r + 2), fill=(0, 0, 0, 100))
+        # B: 綠色圓點
+        draw.ellipse((bx - r, by - r, bx + r, by + r), fill=(0, 200, 0, 255), outline=(255, 255, 255, 255), width=4)
+        
+        # 在圓點中間畫上 A / B 文字（使用更大更粗的字體）
+        try:
+            # 嘗試載入較大的字體
+            font_marker = self._load_cjk_font(16)
+        except:
+            font_marker = ImageFont.load_default()
+        
+        # 計算文字位置（置中）
+        # A 文字
+        a_bbox = draw.textbbox((0, 0), "A", font=font_marker)
+        a_w = a_bbox[2] - a_bbox[0]
+        a_h = a_bbox[3] - a_bbox[1]
+        draw.text((ax - a_w/2, ay - a_h/2), "A", fill=(255, 255, 255, 255), font=font_marker)
+        
+        # B 文字
+        b_bbox = draw.textbbox((0, 0), "B", font=font_marker)
+        b_w = b_bbox[2] - b_bbox[0]
+        b_h = b_bbox[3] - b_bbox[1]
+        draw.text((bx - b_w/2, by - b_h/2), "B", fill=(255, 255, 255, 255), font=font_marker)
+
+    def _annotate_ab_near_markers(self, image_path: str, a_lat, a_lng, b_lat, b_lng, a_addr: str, b_addr: str,
+                                  zoom: int, center_lat: float, center_lng: float):
+        """
+        將 A/B 地址畫在 A/B 點旁邊（貼近 marker）
+        """
+        try:
+            img = Image.open(image_path)
+            if img.mode != "RGBA":
+                img = img.convert("RGBA")
+
+            overlay = Image.new("RGBA", img.size, (255, 255, 255, 0))
+            draw = ImageDraw.Draw(overlay)
+
+            # 字型（使用新的通用載入邏輯）
+            font = self._load_cjk_font(24)
+
+            W, H = img.size
+
+            # 轉成像素座標
+            ax, ay = self._latlng_to_pixel(a_lat, a_lng, zoom, W, H, center_lat, center_lng)
+            bx, by = self._latlng_to_pixel(b_lat, b_lng, zoom, W, H, center_lat, center_lng)
+
+            # clamp 到畫面內（至少留 20px 邊界）
+            ax = int(min(max(ax, 20), W - 20))
+            ay = int(min(max(ay, 20), H - 20))
+            bx = int(min(max(bx, 20), W - 20))
+            by = int(min(max(by, 20), H - 20))
+
+            logger.info(f"[AB PIXEL] A=({ax},{ay}) B=({bx},{by}) zoom={zoom} center=({center_lat},{center_lng}) size=({W},{H})")
+
+            # 1. 先畫 A/B 圓點（不靠 Google markers）
+            self._draw_ab_markers(draw, ax, ay, bx, by)
+
+            # 2. 再畫 A/B 地址框（確保文字清晰可見）
+            a_text = f"A點（起點）：{a_addr}"
+            b_text = f"B點（終點）：{b_addr}"
+
+            # 預設放右上（避免壓到 marker），如果超出邊界就換位置
+            def place_box(px, py, text, prefer="right"):
+                offset = 20 # 避開 marker 半徑
+                # 調整最大寬度，避免遮擋太多地圖 (0.42 -> 0.32)
+                max_w = int(W * 0.32)
+
+                # 候選位置：右上、右下、左上、左下
+                candidates = []
+                if prefer == "right":
+                    candidates = [
+                        (px + offset, py - 60),
+                        (px + offset, py + offset),
+                        (px - max_w - offset, py - 60),
+                        (px - max_w - offset, py + offset),
+                    ]
+                else:
+                    candidates = [
+                        (px - max_w - offset, py - 60),
+                        (px - max_w - offset, py + offset),
+                        (px + offset, py - 60),
+                        (px + offset, py + offset),
+                    ]
+
+                for (x, y) in candidates:
+                    # 先畫在暫存 overlay 上試 bbox
+                    tmp = Image.new("RGBA", overlay.size, (0, 0, 0, 0))
+                    tmp_draw = ImageDraw.Draw(tmp)
+                    bb = self._draw_label_box(tmp_draw, text, x, y, font, max_width=max_w)
+                    l, t, r, b = bb
+                    if l >= 8 and t >= 8 and r <= W - 8 and b <= H - 8:
+                        # 真正畫到 overlay
+                        self._draw_label_box(draw, text, x, y, font, max_width=max_w)
+                        return
+
+                # 都不行就硬放（但 clamp 到邊界）
+                x = min(max(8, int(px + offset)), W - max_w - 8)
+                y = min(max(8, int(py + offset)), H - 80)
+                self._draw_label_box(draw, text, x, y, font, max_width=max_w)
+
+            place_box(ax, ay, a_text, prefer="right")
+            place_box(bx, by, b_text, prefer="left")
+
+            img = Image.alpha_composite(img, overlay)
+
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            background.paste(img, mask=img.split()[3])
+            background.save(image_path)
+            logger.info("地圖已加註 A/B Marker 旁地址 (Advanced Burn-in + Manual Markers)")
+
+        except Exception as e:
+            logger.error(f"標註 A/B Marker 旁地址錯誤: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
+    # 仍保留：舊版只加 km 的功能（如果其他地方還在用）
+    def _add_km_text_to_map(self, image_path, km):
+        """
+        在地圖圖片上加入公里數文字（舊版）
+        """
+        try:
+            img = Image.open(image_path)
+            if img.mode != "RGBA":
+                img = img.convert("RGBA")
+
+            overlay = Image.new("RGBA", img.size, (255, 255, 255, 0))
+            draw = ImageDraw.Draw(overlay)
+
+            text = f"{km} km"
+
+            font = None
+            font_paths = []
+
+            if os.name == "nt":
+                windows_font_dir = os.path.join(os.environ.get("WINDIR", "C:/Windows"), "Fonts")
+                font_paths.extend([
+                    os.path.join(windows_font_dir, "msjh.ttc"),
+                    os.path.join(windows_font_dir, "simsun.ttc"),
+                    os.path.join(windows_font_dir, "arial.ttf"),
+                ])
+            else:
+                linux_font_dirs = [
+                    "/usr/share/fonts/truetype/droid",
+                    "/usr/share/fonts/truetype/liberation",
+                    "/usr/share/fonts/TTF",
+                ]
+                for font_dir in linux_font_dirs:
+                    if os.path.exists(font_dir):
+                        font_paths.extend([
+                            os.path.join(font_dir, "DroidSansFallbackFull.ttf"),
+                            os.path.join(font_dir, "LiberationSans-Regular.ttf"),
+                        ])
+
+            for font_path in font_paths:
+                if os.path.exists(font_path):
+                    try:
+                        font = ImageFont.truetype(font_path, 36)
+                        break
+                    except Exception:
+                        continue
+
+            if font is None:
+                font = ImageFont.load_default()
+
+            x, y = 20, 20
+            bbox = draw.textbbox((x, y), text, font=font)
+            padding = 10
+            draw.rectangle(
+                [bbox[0] - padding, bbox[1] - padding, bbox[2] + padding, bbox[3] + padding],
+                fill=(255, 255, 255, 200),
+            )
+            draw.text((x, y), text, fill=(255, 0, 0, 255), font=font)
+
+            img = Image.alpha_composite(img, overlay)
+
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            background.paste(img, mask=img.split()[3])
+            img = background
+
+            img.save(image_path)
+            logger.info(f"成功在地圖上添加公里數: {km} km")
+
+        except Exception as e:
+            logger.error(f"在地圖上添加公里數錯誤: {str(e)}")
