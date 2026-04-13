@@ -140,9 +140,11 @@ def export_template():
             '姓名',
             '計畫別',
             '起點名稱',
+            '起點地址',
             '出差日期時間（開始）',
             '出差日期時間（結束）',
             '目的地名稱',
+            '終點地址',
             '連結',
         ]
 
@@ -163,10 +165,12 @@ def export_template():
             '張三',
             'IDA智慧工安',
             '安環高雄處',
+            '高雄市左營區博愛三路12號',
             '2024-10-22T09:00:00',
             '2024-10-22T17:00:00',
             '經濟部產業園區管理局',
-            'https://www.google.com/maps/dir/813高雄市左營區博愛三路12號/經濟部產業園區管理局+811高雄市楠梓區加昌路600號/',
+            '高雄市楠梓區加昌路600號',
+            '',
         ]
         for col_idx, value in enumerate(example_data, start=1):
             cell = ws.cell(row=2, column=col_idx, value=value)
@@ -176,11 +180,13 @@ def export_template():
             'A': 15,
             'B': 12,
             'C': 20,
-            'D': 25,
-            'E': 25,
-            'F': 25,
-            'G': 30,
-            'H': 90,
+            'D': 20,
+            'E': 28,
+            'F': 22,
+            'G': 22,
+            'H': 24,
+            'I': 28,
+            'J': 72,
         }.items():
             ws.column_dimensions[col].width = width
 

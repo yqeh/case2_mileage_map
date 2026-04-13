@@ -1,4 +1,4 @@
-﻿"""Word report generation service."""
+"""Word report generation service."""
 
 from datetime import datetime
 from pathlib import Path
@@ -111,7 +111,7 @@ class WordService:
             viewport_width=1920,
             viewport_height=1080,
             wait_timeout=30000,
-            log_context=record.get('目的地名稱') or 'Google Maps link',
+            log_context=record.get('目的地名稱') or record.get('終點地址') or 'Google Maps link',
         )
         if not screenshot_path:
             return None
@@ -125,15 +125,15 @@ class WordService:
         record['StaticMapImage'] = relative_path
         return absolute_path
 
-    def _capture_image_from_route(self, origin_name, destination_name, record):
-        if not origin_name or not destination_name:
+    def _capture_image_from_route(self, origin_address, destination_address, record):
+        if not origin_address or not destination_address:
             return None
         temp_maps_dir = get_temp_maps_dir()
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
         output_path = temp_maps_dir / f'word_route_{timestamp}.png'
         screenshot_path = capture_route_screenshot_sync(
-            origin=origin_name,
-            destination=destination_name,
+            origin=origin_address,
+            destination=destination_address,
             output_path=str(output_path),
             viewport_width=1920,
             viewport_height=1080,
@@ -158,17 +158,45 @@ class WordService:
             return f'{department}::{employee}'
         return ''
 
-    def _resolve_origin_name(self, record, fixed_origin, last_destination_by_owner):
+    def _pick_text(self, *values):
+        for value in values:
+            text = str(value or '').strip()
+            if text:
+                return text
+        return ''
+
+    def _resolve_locations(self, record, fixed_origin, last_stop_by_owner):
         owner_key = self._record_owner_key(record)
-        chained_origin = last_destination_by_owner.get(owner_key) if owner_key else None
-        origin_name = chained_origin or fixed_origin or record.get('起點名稱', '')
-        return owner_key, origin_name
+        chained_origin = last_stop_by_owner.get(owner_key) if owner_key else ''
+
+        start_name = self._pick_text(record.get('起點名稱'))
+        start_address = self._pick_text(
+            record.get('起點地址'),
+            record.get('OriginAddress'),
+            record.get('origin_address'),
+        )
+        destination_name = self._pick_text(record.get('目的地名稱'))
+        destination_address = self._pick_text(
+            record.get('終點地址'),
+            record.get('DestinationAddress'),
+            record.get('destination_address'),
+        )
+
+        default_origin_display = self._pick_text(fixed_origin, start_name, start_address)
+        default_origin_route = self._pick_text(fixed_origin, start_address, start_name)
+        destination_display = self._pick_text(destination_name, destination_address)
+        destination_route = self._pick_text(destination_address, destination_name)
+
+        origin_display = self._pick_text(chained_origin, default_origin_display)
+        origin_route = self._pick_text(chained_origin, default_origin_route)
+
+        return owner_key, origin_display, origin_route, destination_display, destination_route
 
     def generate_report(self, project_name, records, fixed_origin=None, page_break_per_record=True):
         try:
             doc = Document()
             sorted_records = sorted(records, key=lambda x: self._safe_dt(x.get('出差日期時間（開始）')))
-            last_destination_by_owner = {}
+            last_stop_by_owner = {}
 
             for idx, record in enumerate(sorted_records):
                 try:
@@ -177,22 +205,13 @@ class WordService:
                         doc.add_page_break()
 
                     date_str = self._format_mmdd(record.get('出差日期時間（開始）'))
-                    owner_key, origin_name = self._resolve_origin_name(record, fixed_origin, last_destination_by_owner)
-                    destination_name = record.get('目的地名稱', '')
-                    origin_address = (
-                        record.get('OriginAddress')
-                        or record.get('起點地址')
-                        or record.get('origin_address')
-                        or origin_name
-                    )
-                    destination_address = (
-                        record.get('DestinationAddress')
-                        or record.get('終點地址')
-                        or record.get('destination_address')
-                        or destination_name
+                    owner_key, origin_display, origin_route, destination_display, destination_route = self._resolve_locations(
+                        record,
+                        fixed_origin,
+                        last_stop_by_owner,
                     )
 
-                    title_text = f"{date_str}{origin_address}至{destination_address}"
+                    title_text = f"{date_str}{origin_display}至{destination_display}"
                     title_paragraph = doc.add_paragraph(title_text)
                     title_paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
                     for run in title_paragraph.runs:
@@ -201,9 +220,9 @@ class WordService:
 
                     absolute_image_path = self._resolve_existing_image(record.get('StaticMapImage'))
                     if not absolute_image_path:
-                        absolute_image_path = self._capture_image_from_link(record)
+                        absolute_image_path = self._capture_image_from_route(origin_route, destination_route, record)
                     if not absolute_image_path:
-                        absolute_image_path = self._capture_image_from_route(origin_address, destination_address, record)
+                        absolute_image_path = self._capture_image_from_link(record)
 
                     if absolute_image_path:
                         picture_paragraph = doc.add_paragraph()
@@ -216,8 +235,8 @@ class WordService:
                         error_run = error_paragraph.add_run('本筆地圖截圖失敗')
                         error_run.font.size = Pt(14)
 
-                    if owner_key and destination_name:
-                        last_destination_by_owner[owner_key] = destination_name
+                    if owner_key and destination_route:
+                        last_stop_by_owner[owner_key] = destination_route
                 except Exception as e:
                     logger.error(f"處理第 {idx + 1} 筆記錄時發生錯誤: {e}")
                     continue

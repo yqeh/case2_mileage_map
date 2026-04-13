@@ -1,4 +1,4 @@
-﻿"""Excel parsing and export helpers."""
+"""Excel parsing and export helpers."""
 
 from datetime import datetime
 from pathlib import Path
@@ -14,14 +14,12 @@ class ExcelService:
     """Handle Excel parsing, grouping, and export updates."""
 
     def __init__(self):
-        self.required_columns = [
+        self.base_required_columns = [
             '部門',
             '姓名',
             '計畫別',
-            '起點名稱',
             '出差日期時間（開始）',
             '出差日期時間（結束）',
-            '目的地名稱',
         ]
 
     def _get_sort_key(self, date_value):
@@ -65,13 +63,36 @@ class ExcelService:
             rename_map = {src: dst for src, dst in column_mapping.items() if src in df.columns}
             df = df.rename(columns=rename_map)
 
-            missing_columns = [col for col in self.required_columns if col not in df.columns]
+            missing_columns = [col for col in self.base_required_columns if col not in df.columns]
             if missing_columns:
                 return {
                     'success': False,
                     'error': f"缺少必要欄位: {', '.join(missing_columns)}",
                     'data': None,
                 }
+
+            if '起點名稱' not in df.columns and '起點地址' not in df.columns:
+                return {
+                    'success': False,
+                    'error': '缺少必要欄位: 起點名稱 或 起點地址',
+                    'data': None,
+                }
+
+            if '目的地名稱' not in df.columns and '終點地址' not in df.columns:
+                return {
+                    'success': False,
+                    'error': '缺少必要欄位: 目的地名稱 或 終點地址',
+                    'data': None,
+                }
+
+            if '起點名稱' not in df.columns:
+                df['起點名稱'] = df['起點地址']
+            if '目的地名稱' not in df.columns:
+                df['目的地名稱'] = df['終點地址']
+            if '起點地址' not in df.columns:
+                df['起點地址'] = df['起點名稱']
+            if '終點地址' not in df.columns:
+                df['終點地址'] = df['目的地名稱']
 
             for date_col in ('出差日期時間（開始）', '出差日期時間（結束）'):
                 if date_col in df.columns:
