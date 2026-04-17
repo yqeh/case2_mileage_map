@@ -185,8 +185,10 @@ class ExcelService:
 
             is_travel_table = '出差地點' in df.columns or '出差事由' in df.columns
             if is_travel_table:
-                if '起點名稱' not in df.columns:
-                    df['起點名稱'] = '安環高雄技術部'
+                if '單位' in df.columns:
+                    df['起點名稱'] = df['單位']
+                elif '起點名稱' not in df.columns:
+                    df['起點名稱'] = '安環技術處'
                 if '起點地址' not in df.columns:
                     df['起點地址'] = '813高雄市左營區博愛三路12號'
                 df['DisableChainedOrigin'] = 'Y'
