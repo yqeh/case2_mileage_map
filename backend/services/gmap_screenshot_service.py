@@ -109,8 +109,8 @@ def extract_distance_km_from_text(text: str) -> Optional[float]:
 async def capture_maps_url_screenshot(
     maps_url: str,
     output_path: str | Path,
-    viewport_width: int = 3200,
-    viewport_height: int = 1500,
+    viewport_width: int = 1920,
+    viewport_height: int = 900,
     wait_timeout: int = 30000,
     log_context: str | None = None,
     metadata: dict | None = None,
@@ -139,6 +139,7 @@ async def capture_maps_url_screenshot(
             try:
                 context = await browser.new_context(
                     viewport={'width': viewport_width, 'height': viewport_height},
+                    device_scale_factor=2,
                     user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 )
                 try:
@@ -202,8 +203,8 @@ async def capture_route_screenshot(
     origin: str,
     destination: str,
     output_path: str | Path,
-    viewport_width: int = 3200,
-    viewport_height: int = 1500,
+    viewport_width: int = 1920,
+    viewport_height: int = 900,
     wait_timeout: int = 30000,
 ) -> Optional[str]:
     origin_encoded = quote(origin)
@@ -240,8 +241,8 @@ def _run_async(coro, wait_timeout: int):
 def capture_maps_url_screenshot_sync(
     maps_url: str,
     output_path: str | Path,
-    viewport_width: int = 3200,
-    viewport_height: int = 1500,
+    viewport_width: int = 1920,
+    viewport_height: int = 900,
     wait_timeout: int = 30000,
     log_context: str | None = None,
     metadata: dict | None = None,
@@ -271,8 +272,8 @@ def capture_route_screenshot_sync(
     origin: str,
     destination: str,
     output_path: str | Path,
-    viewport_width: int = 3200,
-    viewport_height: int = 1500,
+    viewport_width: int = 1920,
+    viewport_height: int = 900,
     wait_timeout: int = 30000,
 ) -> Optional[str]:
     if not PLAYWRIGHT_AVAILABLE:
