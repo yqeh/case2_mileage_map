@@ -103,10 +103,6 @@
                     <button class="btn btn-outline-secondary" onclick="deselectAllRecords()">
                         <i class="bi bi-square"></i> 取消全選
                     </button>
-                    <div class="d-flex align-items-center gap-2 flex-wrap">
-                        <label for="projectSelect" class="form-label mb-0 text-nowrap">單一計畫別</label>
-                        <select class="form-select" id="projectSelect" style="min-width: 180px;"></select>
-                    </div>
                     <button class="btn btn-primary" onclick="exportWordSingle()">
                         <i class="bi bi-file-earmark-word"></i> 直接輸出 Word（單一計畫別）
                     </button>
@@ -116,6 +112,28 @@
                 </div>
                 <div class="mt-2 text-muted small">
                     系統會優先使用 Excel 的「起點地址 / 終點地址」產生 Google 地圖開車路線截圖；若有「連結」欄則作為備援。
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <div class="modal fade" id="projectSelectModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">&#x9078;&#x64c7;&#x8981;&#x532f;&#x51fa;&#x7684;&#x8a08;&#x756b;&#x5225;</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <label for="projectSelect" class="form-label">&#x8a08;&#x756b;&#x5225;</label>
+                    <select class="form-select form-select-lg" id="projectSelect"></select>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">&#x53d6;&#x6d88;</button>
+                    <button type="button" class="btn btn-primary" onclick="confirmExportWordSingle()">
+                        <i class="bi bi-file-earmark-word"></i> &#x532f;&#x51fa; Word
+                    </button>
                 </div>
             </div>
         </div>
@@ -312,26 +330,33 @@
             return allRecords;
         }
 
-        async function exportWordSingle() {
+        function exportWordSingle() {
             if (!currentData) {
-                alert('沒有資料可匯出');
+                alert('\u6c92\u6709\u8cc7\u6599\u53ef\u532f\u51fa');
                 return;
             }
 
             const projectNames = Object.keys(currentData.projects);
             if (projectNames.length === 0) {
-                alert('沒有計畫別可匯出');
+                alert('\u6c92\u6709\u8a08\u756b\u5225\u53ef\u532f\u51fa');
                 return;
             }
 
+            populateProjectSelect(currentData);
+            const modalElement = document.getElementById('projectSelectModal');
+            bootstrap.Modal.getOrCreateInstance(modalElement).show();
+        }
+
+        async function confirmExportWordSingle() {
             const projectSelect = document.getElementById('projectSelect');
-            const projectName = projectSelect?.value || projectNames[0];
-            if (!projectName || !currentData.projects[projectName]) {
+            const projectName = projectSelect?.value;
+            if (!projectName || !currentData?.projects?.[projectName]) {
                 alert('\u8acb\u5148\u9078\u64c7\u8981\u532f\u51fa\u7684\u8a08\u756b\u5225');
                 return;
             }
 
-            showLoading(`正在產生 ${projectName} 的 Word 報表...`);
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('projectSelectModal')).hide();
+            showLoading(`\u6b63\u5728\u7522\u751f ${projectName} \u7684 Word \u5831\u8868...`);
             try {
                 const response = await fetch(`${API_BASE_URL}/export/word`, {
                     method: 'POST',
@@ -348,18 +373,18 @@
 
                 if (!response.ok) {
                     const result = await response.json();
-                    throw new Error(result.message || 'Word 匯出失敗');
+                    throw new Error(result.message || 'Word \u532f\u51fa\u5931\u6557');
                 }
 
                 const blob = await response.blob();
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `${projectName}_里程報表.docx`;
+                a.download = `${projectName}_\u91cc\u7a0b\u5831\u8868.docx`;
                 a.click();
                 window.URL.revokeObjectURL(url);
             } catch (error) {
-                alert('匯出失敗: ' + error.message);
+                alert('\u532f\u51fa\u5931\u6557: ' + error.message);
             } finally {
                 hideLoading();
             }
