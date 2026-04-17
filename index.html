@@ -330,6 +330,19 @@
             return allRecords;
         }
 
+        function collectSelectedRecordsForProject(projectName) {
+            const records = [];
+            const projectData = currentData?.projects?.[projectName];
+            if (!projectData) return records;
+            projectData.records.forEach((record, idx) => {
+                const checkbox = document.getElementById(`select-${projectName}-${idx}`);
+                if (checkbox && checkbox.checked) {
+                    records.push(record);
+                }
+            });
+            return records;
+        }
+
         function exportWordSingle() {
             if (!currentData) {
                 alert('\u6c92\u6709\u8cc7\u6599\u53ef\u532f\u51fa');
@@ -355,6 +368,12 @@
                 return;
             }
 
+            const selectedRecords = collectSelectedRecordsForProject(projectName);
+            if (selectedRecords.length === 0) {
+                alert('\u8acb\u81f3\u5c11\u52fe\u9078\u4e00\u7b46\u8981\u532f\u51fa\u7684\u8cc7\u6599');
+                return;
+            }
+
             bootstrap.Modal.getOrCreateInstance(document.getElementById('projectSelectModal')).hide();
             showLoading(`\u6b63\u5728\u7522\u751f ${projectName} \u7684 Word \u5831\u8868...`);
             try {
@@ -366,7 +385,7 @@
                     },
                     body: JSON.stringify({
                         project_name: projectName,
-                        records: currentData.projects[projectName].records,
+                        records: selectedRecords,
                         fixed_origin: fixedOrigin,
                     }),
                 });
@@ -399,8 +418,15 @@
             showLoading('正在產生所有計畫別的 Word 報表...');
             try {
                 const projects = {};
-                for (const [projectName, projectData] of Object.entries(currentData.projects)) {
-                    projects[projectName] = projectData.records;
+                for (const projectName of Object.keys(currentData.projects)) {
+                    const selectedRecords = collectSelectedRecordsForProject(projectName);
+                    if (selectedRecords.length > 0) {
+                        projects[projectName] = selectedRecords;
+                    }
+                }
+                if (Object.keys(projects).length === 0) {
+                    alert('\u8acb\u81f3\u5c11\u52fe\u9078\u4e00\u7b46\u8981\u532f\u51fa\u7684\u8cc7\u6599');
+                    return;
                 }
 
                 const response = await fetch(`${API_BASE_URL}/export/word/batch`, {

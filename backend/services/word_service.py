@@ -237,11 +237,7 @@ class WordService:
         return dt.date().isoformat()
 
     def _trip_group_key(self, record):
-        return (
-            self._date_key(record.get('\u51fa\u5dee\u65e5\u671f\u6642\u9593\uff08\u958b\u59cb\uff09')),
-            str(record.get('\u90e8\u9580') or '').strip(),
-            str(record.get('\u59d3\u540d') or '').strip(),
-        )
+        return self._date_key(record.get('\u51fa\u5dee\u65e5\u671f\u6642\u9593\uff08\u958b\u59cb\uff09'))
 
     def _group_records_by_day(self, records):
         sorted_records = sorted(records, key=lambda x: self._safe_dt(x.get('\u51fa\u5dee\u65e5\u671f\u6642\u9593\uff08\u958b\u59cb\uff09')))
