@@ -87,14 +87,14 @@ class WordService:
         now_text = datetime.now().strftime('截圖時間: %Y/%m/%d %H:%M')
         image = Image.open(image_path).convert('RGB')
         draw = ImageDraw.Draw(image)
-        font = self._load_font(24)
+        font = self._load_font(44)
         bbox = draw.textbbox((0, 0), now_text, font=font)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
-        pad = 12
-        x = image.width - text_w - pad * 2 - 20
-        y = image.height - text_h - pad * 2 - 20
-        draw.rounded_rectangle((x, y, x + text_w + pad * 2, y + text_h + pad * 2), radius=12, fill=(255, 255, 255))
+        pad = 20
+        x = image.width - text_w - pad * 2 - 28
+        y = image.height - text_h - pad * 2 - 28
+        draw.rounded_rectangle((x, y, x + text_w + pad * 2, y + text_h + pad * 2), radius=18, fill=(255, 255, 255), outline=(120, 120, 120), width=2)
         draw.text((x + pad, y + pad), now_text, fill=(40, 40, 40), font=font)
         image.save(image_path)
 
