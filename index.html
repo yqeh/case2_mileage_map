@@ -242,6 +242,28 @@
             }
         }
 
+
+        function getRecordDateKey(record) {
+            const value = record['\u51fa\u5dee\u65e5\u671f\u6642\u9593\uff08\u958b\u59cb\uff09'] || '';
+            return String(value).split('T')[0] || String(value);
+        }
+
+        function toggleDateGroup(groupCheckbox) {
+            const ids = (groupCheckbox.dataset.recordIds || '').split(',').filter(Boolean);
+            ids.forEach(id => {
+                const checkbox = document.getElementById(id);
+                if (checkbox) checkbox.checked = groupCheckbox.checked;
+            });
+        }
+
+        function syncDateGroupCheckboxes() {
+            document.querySelectorAll('.date-group-checkbox').forEach(groupCheckbox => {
+                const ids = (groupCheckbox.dataset.recordIds || '').split(',').filter(Boolean);
+                if (ids.length === 0) return;
+                groupCheckbox.checked = ids.every(id => document.getElementById(id)?.checked);
+            });
+        }
+
         function displayPreview(data) {
             const container = document.getElementById('projectsContainer');
             container.innerHTML = '';
@@ -251,34 +273,59 @@
                 projectBlock.className = 'project-block';
                 projectBlock.innerHTML = `
                     <div class="project-header">
-                        <i class="bi bi-folder"></i> ${projectName} (${projectData.count} 筆)
+                        <i class="bi bi-folder"></i> ${projectName} (${projectData.count} \u7b46)
                     </div>
-                    <div class="project-records" id="project-${projectName}"></div>
+                    <div class="project-records"></div>
                 `;
 
-                const recordsContainer = projectBlock.querySelector(`#project-${projectName}`);
+                const recordsContainer = projectBlock.querySelector('.project-records');
+                const groups = [];
+                const groupByDate = new Map();
                 projectData.records.forEach((record, idx) => {
+                    const dateKey = getRecordDateKey(record);
+                    if (!groupByDate.has(dateKey)) {
+                        groupByDate.set(dateKey, { dateKey, firstRecord: record, indices: [], destinations: [], links: [] });
+                        groups.push(groupByDate.get(dateKey));
+                    }
+                    const group = groupByDate.get(dateKey);
+                    group.indices.push(idx);
+                    const destination = record['\u76ee\u7684\u5730\u540d\u7a31'] || record['\u7d42\u9ede\u5730\u5740'] || '';
+                    if (destination) group.destinations.push(destination);
+                    const mapLink = record['\u9023\u7d50'] || record['GoogleMapUrl'] || '';
+                    if (mapLink) group.links.push(mapLink);
+                });
+
+                groups.forEach((group, groupIdx) => {
+                    const record = group.firstRecord;
                     const recordRow = document.createElement('div');
                     recordRow.className = 'record-row';
-                    recordRow.id = `record-${projectName}-${idx}`;
 
-                    const travelDate = record['出差日期時間（開始）'] || '';
-                    const origin = record['起點名稱'] || record['起點地址'] || '';
-                    const destination = record['目的地名稱'] || record['終點地址'] || '';
-                    const mapLink = record['連結'] || record['GoogleMapUrl'] || '';
+                    const travelDate = record['\u51fa\u5dee\u65e5\u671f\u6642\u9593\uff08\u958b\u59cb\uff09'] || '';
+                    const origin = record['\u8d77\u9ede\u540d\u7a31'] || record['\u8d77\u9ede\u5730\u5740'] || '';
+                    const destinations = [...new Set(group.destinations)].join('\u3001');
+                    const hiddenCheckboxes = group.indices.map(idx => {
+                        const id = `select-${projectName}-${idx}`;
+                        return `<input class="form-check-input d-none" type="checkbox" id="${id}" checked>`;
+                    }).join('');
+                    const recordIds = group.indices.map(idx => `select-${projectName}-${idx}`).join(',');
+                    const linkHtml = group.links.length > 0
+                        ? `<a href="${group.links[0]}" target="_blank" class="btn btn-sm btn-link p-0">\u67e5\u770b\u9023\u7d50 <i class="bi bi-box-arrow-up-right"></i></a>`
+                        : '';
 
                     recordRow.innerHTML = `
                         <div class="d-flex align-items-center gap-3 flex-wrap">
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox"
-                                       id="select-${projectName}-${idx}"
+                                <input class="form-check-input date-group-checkbox" type="checkbox"
+                                       id="select-group-${projectName}-${groupIdx}"
+                                       data-record-ids="${recordIds}"
                                        checked
-                                       onchange="updateSelectStatus('${projectName}', ${idx}, this.checked)">
-                                <label class="form-check-label" for="select-${projectName}-${idx}">
-                                    <strong>${travelDate}</strong> ${origin} → ${destination}
+                                       onchange="toggleDateGroup(this)">
+                                ${hiddenCheckboxes}
+                                <label class="form-check-label" for="select-group-${projectName}-${groupIdx}">
+                                    <strong>${travelDate}</strong> ${origin} \u2192 ${destinations}
                                 </label>
                             </div>
-                            ${mapLink ? `<a href="${mapLink}" target="_blank" class="btn btn-sm btn-link p-0">查看連結 <i class="bi bi-box-arrow-up-right"></i></a>` : ''}
+                            ${linkHtml}
                         </div>
                     `;
 
@@ -288,7 +335,6 @@
                 container.appendChild(projectBlock);
             }
         }
-
         function updateSelectStatus(projectName, idx, isSelected) {
         }
 
@@ -300,6 +346,7 @@
                     if (checkbox) checkbox.checked = true;
                 });
             }
+            syncDateGroupCheckboxes();
         }
 
         function deselectAllRecords() {
@@ -310,6 +357,7 @@
                     if (checkbox) checkbox.checked = false;
                 });
             }
+            syncDateGroupCheckboxes();
         }
 
         function collectSelectedRecords() {
