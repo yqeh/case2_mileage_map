@@ -289,10 +289,10 @@ class WordService:
         try:
             doc = Document()
             for section in doc.sections:
-                section.top_margin = Inches(0.35)
-                section.bottom_margin = Inches(0.35)
-                section.left_margin = Inches(0.35)
-                section.right_margin = Inches(0.35)
+                section.top_margin = Inches(0.25)
+                section.bottom_margin = Inches(0.25)
+                section.left_margin = Inches(0.25)
+                section.right_margin = Inches(0.25)
             record_groups = self._group_records_by_day(records)
 
             for idx, group_records in enumerate(record_groups):
@@ -329,10 +329,10 @@ class WordService:
 
                     total_km_text = self._format_km(total_km)
                     if len(destination_displays) == 1:
-                        title_text = f"{date_str}{company_display}\u81f3{final_destination_display}\uff0c\u5f80\u8fd4\uff0c\u5171\u6838\u92b7{total_km_text}\u516c\u91cc"
+                        title_text = f"{date_str}{company_display}\u81f3{final_destination_display}\u5f80\u8fd4\uff0c \u5171\u6838\u92b7 {total_km_text} \u516c\u91cc"
                     else:
                         joined_destinations = '\u3001'.join(destination_displays)
-                        title_text = f"{date_str}{company_display}\u81f3{joined_destinations}\uff0c\u5f80\u8fd4\uff0c\u5171\u6838\u92b7{total_km_text}\u516c\u91cc"
+                        title_text = f"{date_str}{company_display}\u81f3{joined_destinations}\u5f80\u8fd4\uff0c \u5171\u6838\u92b7 {total_km_text} \u516c\u91cc"
 
                     title_paragraph = doc.add_paragraph(title_text)
                     title_paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -344,7 +344,7 @@ class WordService:
                         picture_paragraph = doc.add_paragraph()
                         picture_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
                         run = picture_paragraph.add_run()
-                        run.add_picture(str(absolute_image_path), width=Inches(7.45))
+                        run.add_picture(str(absolute_image_path), width=Inches(7.85))
                     else:
                         error_paragraph = doc.add_paragraph()
                         error_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
