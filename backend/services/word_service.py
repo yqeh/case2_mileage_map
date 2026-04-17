@@ -108,8 +108,8 @@ class WordService:
         screenshot_path = capture_maps_url_screenshot_sync(
             maps_url=maps_url,
             output_path=str(output_path),
-            viewport_width=1920,
-            viewport_height=1080,
+            viewport_width=2880,
+            viewport_height=1620,
             wait_timeout=30000,
             log_context=record.get('目的地名稱') or record.get('終點地址') or 'Google Maps link',
         )
@@ -151,8 +151,8 @@ class WordService:
         screenshot_path = capture_maps_url_screenshot_sync(
             maps_url=maps_url,
             output_path=str(output_path),
-            viewport_width=1920,
-            viewport_height=1080,
+            viewport_width=2880,
+            viewport_height=1620,
             wait_timeout=30000,
             log_context=log_context or maps_url,
             metadata=metadata,
@@ -298,7 +298,7 @@ class WordService:
             for idx, group_records in enumerate(record_groups):
                 try:
                     logger.info(f"\u8655\u7406\u7b2c {idx + 1}/{len(record_groups)} \u7d44\u540c\u65e5\u884c\u7a0b")
-                    if idx > 0 and page_break_per_record:
+                    if idx > 0 and page_break_per_record and idx % 2 == 0:
                         doc.add_page_break()
 
                     date_str = self._format_mmdd(group_records[0].get('\u51fa\u5dee\u65e5\u671f\u6642\u9593\uff08\u958b\u59cb\uff09'))
@@ -336,6 +336,9 @@ class WordService:
 
                     title_paragraph = doc.add_paragraph(title_text)
                     title_paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                    title_paragraph.paragraph_format.space_before = Pt(0)
+                    title_paragraph.paragraph_format.space_after = Pt(0)
+                    title_paragraph.paragraph_format.line_spacing = 1
                     for run in title_paragraph.runs:
                         run.bold = True
                         run.font.size = Pt(18)
@@ -343,6 +346,9 @@ class WordService:
                     if absolute_image_path:
                         picture_paragraph = doc.add_paragraph()
                         picture_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        picture_paragraph.paragraph_format.space_before = Pt(0)
+                        picture_paragraph.paragraph_format.space_after = Pt(0)
+                        picture_paragraph.paragraph_format.line_spacing = 1
                         run = picture_paragraph.add_run()
                         run.add_picture(str(absolute_image_path), width=Inches(7.85))
                     else:
