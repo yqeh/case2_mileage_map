@@ -94,7 +94,7 @@ class WordService:
         pad = 20
         x = image.width - text_w - pad * 2 - 28
         y = image.height - text_h - pad * 2 - 28
-        draw.rounded_rectangle((x, y, x + text_w + pad * 2, y + text_h + pad * 2), radius=18, fill=(255, 255, 255), outline=(120, 120, 120), width=2)
+        draw.rounded_rectangle((x, y, x + text_w + pad * 2, y + text_h + pad * 2), radius=18, fill=(255, 255, 255))
         draw.text((x + pad, y + pad), now_text, fill=(40, 40, 40), font=font)
         image.save(image_path)
 
