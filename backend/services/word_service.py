@@ -154,8 +154,9 @@ class WordService:
     def _record_owner_key(self, record):
         department = str(record.get('部門') or '').strip()
         employee = str(record.get('姓名') or '').strip()
-        if department or employee:
-            return f'{department}::{employee}'
+        chain_group = str(record.get('RouteChainGroup') or '').strip()
+        if department or employee or chain_group:
+            return f'{department}::{employee}::{chain_group}'
         return ''
 
     def _pick_text(self, *values):
@@ -167,7 +168,8 @@ class WordService:
 
     def _resolve_locations(self, record, fixed_origin, last_stop_by_owner):
         owner_key = self._record_owner_key(record)
-        chained_origin = last_stop_by_owner.get(owner_key) if owner_key else ''
+        disable_chain = str(record.get('DisableChainedOrigin') or '').strip().upper() == 'Y'
+        chained_origin = '' if disable_chain else (last_stop_by_owner.get(owner_key) if owner_key else '')
 
         start_name = self._pick_text(record.get('起點名稱'))
         start_address = self._pick_text(

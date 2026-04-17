@@ -135,18 +135,7 @@ def export_template():
         ws = wb.active
         ws.title = '範本'
 
-        headers = [
-            '部門',
-            '姓名',
-            '計畫別',
-            '起點名稱',
-            '起點地址',
-            '出差日期時間（開始）',
-            '出差日期時間（結束）',
-            '目的地名稱',
-            '終點地址',
-            '連結',
-        ]
+        headers = ['專案', '員工姓名', '單位', '出差起日', '出差迄日', '出差事由', '出差地點', '申請日期', '簽核狀態', '核可否', '差旅費狀態']
 
         header_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
         header_font = Font(bold=True, color='FFFFFF', size=11)
@@ -160,33 +149,23 @@ def export_template():
 
         ws.row_dimensions[1].height = 25
 
-        example_data = [
-            '安環處',
-            '張三',
-            'IDA智慧工安',
-            '安環高雄處',
-            '高雄市左營區博愛三路12號',
-            '2024-10-22T09:00:00',
-            '2024-10-22T17:00:00',
-            '經濟部產業園區管理局',
-            '高雄市楠梓區加昌路600號',
-            '',
-        ]
+        example_data = ['IDA智慧工安', '林兴譜', '安環高雄技術處', '2026/4/1 上午 08:00:00', '2026/4/1 下午 05:00:00', '計畫討論', '高雄市林園區石化三路9號 高雄市楠梓區加昌路600號', '20260331', '可', '', '尚未填寫差旅費']
         for col_idx, value in enumerate(example_data, start=1):
             cell = ws.cell(row=2, column=col_idx, value=value)
             cell.alignment = Alignment(horizontal='left', vertical='center')
 
         for col, width in {
-            'A': 15,
-            'B': 12,
+            'A': 16,
+            'B': 14,
             'C': 20,
-            'D': 20,
-            'E': 28,
-            'F': 22,
-            'G': 22,
-            'H': 24,
-            'I': 28,
-            'J': 72,
+            'D': 24,
+            'E': 24,
+            'F': 16,
+            'G': 72,
+            'H': 14,
+            'I': 14,
+            'J': 12,
+            'K': 20,
         }.items():
             ws.column_dimensions[col].width = width
 
