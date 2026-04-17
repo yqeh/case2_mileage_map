@@ -109,8 +109,8 @@ def extract_distance_km_from_text(text: str) -> Optional[float]:
 async def capture_maps_url_screenshot(
     maps_url: str,
     output_path: str | Path,
-    viewport_width: int = 1920,
-    viewport_height: int = 900,
+    viewport_width: int = 1366,
+    viewport_height: int = 768,
     wait_timeout: int = 30000,
     log_context: str | None = None,
     metadata: dict | None = None,
@@ -203,8 +203,8 @@ async def capture_route_screenshot(
     origin: str,
     destination: str,
     output_path: str | Path,
-    viewport_width: int = 1920,
-    viewport_height: int = 900,
+    viewport_width: int = 1366,
+    viewport_height: int = 768,
     wait_timeout: int = 30000,
 ) -> Optional[str]:
     origin_encoded = quote(origin)
@@ -241,8 +241,8 @@ def _run_async(coro, wait_timeout: int):
 def capture_maps_url_screenshot_sync(
     maps_url: str,
     output_path: str | Path,
-    viewport_width: int = 1920,
-    viewport_height: int = 900,
+    viewport_width: int = 1366,
+    viewport_height: int = 768,
     wait_timeout: int = 30000,
     log_context: str | None = None,
     metadata: dict | None = None,
@@ -272,8 +272,8 @@ def capture_route_screenshot_sync(
     origin: str,
     destination: str,
     output_path: str | Path,
-    viewport_width: int = 1920,
-    viewport_height: int = 900,
+    viewport_width: int = 1366,
+    viewport_height: int = 768,
     wait_timeout: int = 30000,
 ) -> Optional[str]:
     if not PLAYWRIGHT_AVAILABLE:

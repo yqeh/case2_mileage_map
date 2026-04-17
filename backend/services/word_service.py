@@ -108,8 +108,8 @@ class WordService:
         screenshot_path = capture_maps_url_screenshot_sync(
             maps_url=maps_url,
             output_path=str(output_path),
-            viewport_width=1920,
-            viewport_height=900,
+            viewport_width=1366,
+            viewport_height=768,
             wait_timeout=30000,
             log_context=record.get('目的地名稱') or record.get('終點地址') or 'Google Maps link',
         )
@@ -151,8 +151,8 @@ class WordService:
         screenshot_path = capture_maps_url_screenshot_sync(
             maps_url=maps_url,
             output_path=str(output_path),
-            viewport_width=1920,
-            viewport_height=900,
+            viewport_width=1366,
+            viewport_height=768,
             wait_timeout=30000,
             log_context=log_context or maps_url,
             metadata=metadata,
