@@ -302,7 +302,7 @@
 
                     const travelDate = record['\u51fa\u5dee\u65e5\u671f\u6642\u9593\uff08\u958b\u59cb\uff09'] || '';
                     const origin = record['\u8d77\u9ede\u540d\u7a31'] || record['\u8d77\u9ede\u5730\u5740'] || '';
-                    const destinations = [...new Set(group.destinations)].join('\u3001');
+                    const destinations = [...new Set(group.destinations)].join(' \u2192 ');
                     const hiddenCheckboxes = group.indices.map(idx => {
                         const id = `select-${projectName}-${idx}`;
                         return `<input class="form-check-input d-none" type="checkbox" id="${id}" checked>`;
