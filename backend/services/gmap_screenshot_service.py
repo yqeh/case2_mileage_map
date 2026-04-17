@@ -5,6 +5,7 @@ from typing import Optional
 from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 import asyncio
 import os
+import re
 
 from loguru import logger
 
@@ -83,6 +84,28 @@ def normalize_google_maps_driving_url(maps_url: str) -> str:
     return maps_url
 
 
+def extract_distance_km_from_text(text: str) -> Optional[float]:
+    """Extract the first visible Google Maps route distance from page text."""
+    if not text:
+        return None
+
+    # Prefer kilometer values. Meter values also appear in the map scale and are
+    # not reliable route distances, so they are intentionally ignored.
+    patterns = [
+        r'([0-9]+(?:[.,][0-9]+)?)\s*\u516c\u91cc',
+        r'([0-9]+(?:[.,][0-9]+)?)\s*km\b',
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            try:
+                value = float(match.group(1).replace(',', '.'))
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+    return None
+
+
 async def capture_maps_url_screenshot(
     maps_url: str,
     output_path: str | Path,
@@ -90,6 +113,7 @@ async def capture_maps_url_screenshot(
     viewport_height: int = 1080,
     wait_timeout: int = 30000,
     log_context: str | None = None,
+    metadata: dict | None = None,
 ) -> Optional[str]:
     if not PLAYWRIGHT_AVAILABLE:
         logger.error("Playwright 未安裝，無法進行 Google Maps 截圖")
@@ -131,6 +155,15 @@ async def capture_maps_url_screenshot(
                         logger.warning('等待主要地圖元素逾時，改以目前畫面截圖')
 
                     await page.wait_for_timeout(3000)
+                    if metadata is not None:
+                        try:
+                            page_text = await page.locator('body').inner_text(timeout=10000)
+                            distance_km = extract_distance_km_from_text(page_text)
+                            if distance_km:
+                                metadata['distance_km'] = distance_km
+                                logger.debug(f"? Google Maps ???????: {distance_km}")
+                        except Exception as e:
+                            logger.warning(f"? Google Maps ?????????: {e}")
                     logger.debug(f"Viewport 尺寸: {page.viewport_size}")
                     await page.wait_for_timeout(1000)
                     logger.debug(f"開始截圖，儲存到: {output_path}")
@@ -211,6 +244,7 @@ def capture_maps_url_screenshot_sync(
     viewport_height: int = 1080,
     wait_timeout: int = 30000,
     log_context: str | None = None,
+    metadata: dict | None = None,
 ) -> Optional[str]:
     if not PLAYWRIGHT_AVAILABLE:
         logger.error("Playwright 未安裝，無法進行 Google Maps 截圖")
@@ -224,6 +258,7 @@ def capture_maps_url_screenshot_sync(
                 viewport_height,
                 wait_timeout,
                 log_context,
+                metadata,
             ),
             wait_timeout,
         )

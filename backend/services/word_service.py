@@ -142,7 +142,7 @@ class WordService:
             log_context=f'{origin_address} -> {destination_address} -> {origin_address}',
         )
 
-    def _capture_image_from_maps_url(self, maps_url, record, log_context=None):
+    def _capture_image_from_maps_url(self, maps_url, record, log_context=None, metadata=None):
         if not maps_url:
             return None
         temp_maps_dir = get_temp_maps_dir()
@@ -155,6 +155,7 @@ class WordService:
             viewport_height=1080,
             wait_timeout=30000,
             log_context=log_context or maps_url,
+            metadata=metadata,
         )
         if not screenshot_path:
             return None
@@ -192,7 +193,7 @@ class WordService:
             return str(int(number))
         return f'{number:.1f}'.rstrip('0').rstrip('.')
 
-    def _calculate_route_total_km(self, route_points):
+    def _calculate_route_total_km(self, route_points, records=None):
         total = 0.0
         has_distance = False
         for origin, destination in zip(route_points, route_points[1:]):
@@ -204,7 +205,30 @@ class WordService:
                 continue
             total += float(detail.get('distance_km') or 0)
             has_distance = True
-        return round(total, 2) if has_distance else None
+        if has_distance:
+            return round(total, 2)
+        return self._estimate_total_km_from_records(records or [])
+
+    def _estimate_total_km_from_records(self, records):
+        total = 0.0
+        has_distance = False
+        for record in records:
+            value = record.get('OneWayKm')
+            if value is None:
+                round_trip = record.get('RoundTripKm')
+                try:
+                    value = float(round_trip) / 2 if round_trip is not None else None
+                except (TypeError, ValueError):
+                    value = None
+            try:
+                if value is not None:
+                    total += float(value)
+                    has_distance = True
+            except (TypeError, ValueError):
+                continue
+        if not has_distance:
+            return None
+        return round(total * 2, 2)
 
     def _date_key(self, date_value):
         dt = self._safe_dt(date_value)
@@ -281,10 +305,24 @@ class WordService:
                     destination_displays = [stop['display'] for stop in stops]
                     destination_routes = [stop['route'] for stop in stops]
                     route_points = [company_route, *destination_routes, company_route]
-                    total_km = self._calculate_route_total_km(route_points)
-                    total_km_text = self._format_km(total_km)
+                    total_km = self._calculate_route_total_km(route_points, group_records)
                     final_destination_display = destination_displays[-1]
 
+                    maps_url = self._build_multi_stop_maps_url(company_route, destination_routes, company_route)
+                    first_record = group_records[0]
+                    capture_metadata = {}
+                    absolute_image_path = self._capture_image_from_maps_url(
+                        maps_url,
+                        first_record,
+                        log_context=f"{company_route} -> {' -> '.join(destination_routes)} -> {company_route}",
+                        metadata=capture_metadata,
+                    )
+                    if total_km is None:
+                        total_km = capture_metadata.get('distance_km')
+                    if not absolute_image_path and len(group_records) == 1:
+                        absolute_image_path = self._capture_image_from_link(first_record)
+
+                    total_km_text = self._format_km(total_km)
                     if len(destination_displays) == 1:
                         title_text = f"{date_str}{company_display}\u81f3{final_destination_display}\uff0c\u8fd4\u56de{company_display}\uff0c\u5171\u6838\u92b7{total_km_text}\u516c\u91cc"
                     else:
@@ -296,16 +334,6 @@ class WordService:
                     for run in title_paragraph.runs:
                         run.bold = True
                         run.font.size = Pt(18)
-
-                    maps_url = self._build_multi_stop_maps_url(company_route, destination_routes, company_route)
-                    first_record = group_records[0]
-                    absolute_image_path = self._capture_image_from_maps_url(
-                        maps_url,
-                        first_record,
-                        log_context=f"{company_route} -> {' -> '.join(destination_routes)} -> {company_route}",
-                    )
-                    if not absolute_image_path and len(group_records) == 1:
-                        absolute_image_path = self._capture_image_from_link(first_record)
 
                     if absolute_image_path:
                         picture_paragraph = doc.add_paragraph()
