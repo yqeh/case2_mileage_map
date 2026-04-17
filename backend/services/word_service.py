@@ -108,8 +108,8 @@ class WordService:
         screenshot_path = capture_maps_url_screenshot_sync(
             maps_url=maps_url,
             output_path=str(output_path),
-            viewport_width=2880,
-            viewport_height=1620,
+            viewport_width=3200,
+            viewport_height=1500,
             wait_timeout=30000,
             log_context=record.get('目的地名稱') or record.get('終點地址') or 'Google Maps link',
         )
@@ -151,8 +151,8 @@ class WordService:
         screenshot_path = capture_maps_url_screenshot_sync(
             maps_url=maps_url,
             output_path=str(output_path),
-            viewport_width=2880,
-            viewport_height=1620,
+            viewport_width=3200,
+            viewport_height=1500,
             wait_timeout=30000,
             log_context=log_context or maps_url,
             metadata=metadata,
@@ -350,7 +350,7 @@ class WordService:
                         picture_paragraph.paragraph_format.space_after = Pt(0)
                         picture_paragraph.paragraph_format.line_spacing = 1
                         run = picture_paragraph.add_run()
-                        run.add_picture(str(absolute_image_path), width=Inches(7.85))
+                        run.add_picture(str(absolute_image_path), width=Inches(7.95))
                     else:
                         error_paragraph = doc.add_paragraph()
                         error_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
