@@ -103,6 +103,10 @@
                     <button class="btn btn-outline-secondary" onclick="deselectAllRecords()">
                         <i class="bi bi-square"></i> 取消全選
                     </button>
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <label for="projectSelect" class="form-label mb-0 text-nowrap">單一計畫別</label>
+                        <select class="form-select" id="projectSelect" style="min-width: 180px;"></select>
+                    </div>
                     <button class="btn btn-primary" onclick="exportWordSingle()">
                         <i class="bi bi-file-earmark-word"></i> 直接輸出 Word（單一計畫別）
                     </button>
@@ -198,11 +202,25 @@
                 currentData = result.data;
                 currentFilepath = result.data.file_path;
                 displayPreview(result.data);
+                populateProjectSelect(result.data);
                 document.getElementById('previewSection').style.display = 'block';
             } catch (error) {
                 alert('上傳失敗: ' + error.message);
             } finally {
                 hideLoading();
+            }
+        }
+
+        function populateProjectSelect(data) {
+            const select = document.getElementById('projectSelect');
+            if (!select) return;
+            select.innerHTML = '';
+
+            for (const [projectName, projectData] of Object.entries(data.projects || {})) {
+                const option = document.createElement('option');
+                option.value = projectName;
+                option.textContent = `${projectName} (${projectData.count || projectData.records?.length || 0} 筆)`;
+                select.appendChild(option);
             }
         }
 
@@ -306,8 +324,10 @@
                 return;
             }
 
-            const projectName = prompt('請輸入要匯出的計畫別名稱：', projectNames[0]);
+            const projectSelect = document.getElementById('projectSelect');
+            const projectName = projectSelect?.value || projectNames[0];
             if (!projectName || !currentData.projects[projectName]) {
+                alert('\u8acb\u5148\u9078\u64c7\u8981\u532f\u51fa\u7684\u8a08\u756b\u5225');
                 return;
             }
 
