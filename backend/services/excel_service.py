@@ -46,7 +46,7 @@ class ExcelService:
         if dash_match:
             name = dash_match.group(1).strip()
             address = dash_match.group(2).strip()
-            if self._looks_like_address(address):
+            if self._looks_like_address(address) and not self._looks_like_address(name):
                 return {
                     '目的地名稱': name or address,
                     '終點地址': address or name,

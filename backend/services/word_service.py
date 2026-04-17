@@ -3,6 +3,7 @@
 from datetime import datetime
 from pathlib import Path
 import os
+from urllib.parse import urlencode
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -10,10 +11,8 @@ from docx.shared import Inches, Pt
 from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
 
-from services.gmap_screenshot_service import (
-    capture_maps_url_screenshot_sync,
-    capture_route_screenshot_sync,
-)
+from services.gmap_screenshot_service import capture_maps_url_screenshot_sync
+from services.google_maps_service import GoogleMapsService
 from utils.log_sanitizer import sanitize_filename
 from utils.path_manager import get_base_dir, get_output_dir, get_relative_path, get_temp_maps_dir
 
@@ -23,6 +22,7 @@ class WordService:
 
     def __init__(self):
         self.output_dir = get_output_dir()
+        self.maps_service = GoogleMapsService()
 
     def _format_mmdd(self, date_value):
         try:
@@ -125,19 +125,36 @@ class WordService:
         record['StaticMapImage'] = relative_path
         return absolute_path
 
+    def _pick_text(self, *values):
+        for value in values:
+            text = str(value or '').strip()
+            if text:
+                return text
+        return ''
+
     def _capture_image_from_route(self, origin_address, destination_address, record):
         if not origin_address or not destination_address:
+            return None
+        maps_url = self._build_multi_stop_maps_url(origin_address, [destination_address], origin_address)
+        return self._capture_image_from_maps_url(
+            maps_url,
+            record,
+            log_context=f'{origin_address} -> {destination_address} -> {origin_address}',
+        )
+
+    def _capture_image_from_maps_url(self, maps_url, record, log_context=None):
+        if not maps_url:
             return None
         temp_maps_dir = get_temp_maps_dir()
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
         output_path = temp_maps_dir / f'word_route_{timestamp}.png'
-        screenshot_path = capture_route_screenshot_sync(
-            origin=origin_address,
-            destination=destination_address,
+        screenshot_path = capture_maps_url_screenshot_sync(
+            maps_url=maps_url,
             output_path=str(output_path),
             viewport_width=1920,
             viewport_height=1080,
             wait_timeout=30000,
+            log_context=log_context or maps_url,
         )
         if not screenshot_path:
             return None
@@ -148,83 +165,147 @@ class WordService:
         relative_path = get_relative_path(absolute_path)
         if not relative_path.startswith('/'):
             relative_path = '/' + relative_path
-        record['StaticMapImage'] = relative_path
+        if record is not None:
+            record['StaticMapImage'] = relative_path
         return absolute_path
 
-    def _record_owner_key(self, record):
-        department = str(record.get('部門') or '').strip()
-        employee = str(record.get('姓名') or '').strip()
-        chain_group = str(record.get('RouteChainGroup') or '').strip()
-        if department or employee or chain_group:
-            return f'{department}::{employee}::{chain_group}'
-        return ''
+    def _build_multi_stop_maps_url(self, origin, stops, destination):
+        clean_stops = [str(stop).strip() for stop in stops if str(stop or '').strip()]
+        query = {
+            'api': '1',
+            'origin': str(origin or '').strip(),
+            'destination': str(destination or '').strip(),
+            'travelmode': 'driving',
+        }
+        if clean_stops:
+            query['waypoints'] = '|'.join(clean_stops)
+        return 'https://www.google.com/maps/dir/?' + urlencode(query)
 
-    def _pick_text(self, *values):
-        for value in values:
-            text = str(value or '').strip()
-            if text:
-                return text
-        return ''
+    def _format_km(self, value):
+        if value is None:
+            return '--'
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return '--'
+        if number == int(number):
+            return str(int(number))
+        return f'{number:.1f}'.rstrip('0').rstrip('.')
 
-    def _resolve_locations(self, record, fixed_origin, last_stop_by_owner):
-        owner_key = self._record_owner_key(record)
-        disable_chain = str(record.get('DisableChainedOrigin') or '').strip().upper() == 'Y'
-        chained_origin = '' if disable_chain else (last_stop_by_owner.get(owner_key) if owner_key else '')
+    def _calculate_route_total_km(self, route_points):
+        total = 0.0
+        has_distance = False
+        for origin, destination in zip(route_points, route_points[1:]):
+            if not origin or not destination:
+                continue
+            detail = self.maps_service.get_route_detail(origin, destination, alternatives=False)
+            if not detail.get('success'):
+                logger.warning(f"\u6838\u92b7\u516c\u91cc\u6578\u8a08\u7b97\u5931\u6557: {origin} -> {destination}, {detail.get('error')}")
+                continue
+            total += float(detail.get('distance_km') or 0)
+            has_distance = True
+        return round(total, 2) if has_distance else None
 
-        start_name = self._pick_text(record.get('起點名稱'))
+    def _date_key(self, date_value):
+        dt = self._safe_dt(date_value)
+        if dt == datetime.min:
+            return str(date_value or '')
+        return dt.date().isoformat()
+
+    def _trip_group_key(self, record):
+        return (
+            self._date_key(record.get('\u51fa\u5dee\u65e5\u671f\u6642\u9593\uff08\u958b\u59cb\uff09')),
+            str(record.get('\u90e8\u9580') or '').strip(),
+            str(record.get('\u59d3\u540d') or '').strip(),
+        )
+
+    def _group_records_by_day(self, records):
+        sorted_records = sorted(records, key=lambda x: self._safe_dt(x.get('\u51fa\u5dee\u65e5\u671f\u6642\u9593\uff08\u958b\u59cb\uff09')))
+        groups = []
+        group_index = {}
+        for record in sorted_records:
+            key = self._trip_group_key(record)
+            if key not in group_index:
+                group_index[key] = len(groups)
+                groups.append([])
+            groups[group_index[key]].append(record)
+        return groups
+
+    def _resolve_trip_plan(self, records, fixed_origin):
+        first_record = records[0]
+        start_name = self._pick_text(first_record.get('\u8d77\u9ede\u540d\u7a31'))
         start_address = self._pick_text(
-            record.get('起點地址'),
-            record.get('OriginAddress'),
-            record.get('origin_address'),
+            first_record.get('\u8d77\u9ede\u5730\u5740'),
+            first_record.get('OriginAddress'),
+            first_record.get('origin_address'),
         )
-        destination_name = self._pick_text(record.get('目的地名稱'))
-        destination_address = self._pick_text(
-            record.get('終點地址'),
-            record.get('DestinationAddress'),
-            record.get('destination_address'),
-        )
+        company_display = self._pick_text(start_name, fixed_origin, start_address)
+        company_route = self._pick_text(fixed_origin, start_address, start_name)
 
-        default_origin_display = self._pick_text(fixed_origin, start_name, start_address)
-        default_origin_route = self._pick_text(fixed_origin, start_address, start_name)
-        destination_display = self._pick_text(destination_name, destination_address)
-        destination_route = self._pick_text(destination_address, destination_name)
+        stops = []
+        for record in records:
+            destination_name = self._pick_text(record.get('\u76ee\u7684\u5730\u540d\u7a31'))
+            destination_address = self._pick_text(
+                record.get('\u7d42\u9ede\u5730\u5740'),
+                record.get('DestinationAddress'),
+                record.get('destination_address'),
+            )
+            destination_display = self._pick_text(destination_name, destination_address)
+            destination_route = self._pick_text(destination_address, destination_name)
+            if destination_route:
+                stops.append({
+                    'display': destination_display,
+                    'route': destination_route,
+                    'record': record,
+                })
 
-        origin_display = self._pick_text(chained_origin, default_origin_display)
-        origin_route = self._pick_text(chained_origin, default_origin_route)
-
-        return owner_key, origin_display, origin_route, destination_display, destination_route
+        return company_display, company_route, stops
 
     def generate_report(self, project_name, records, fixed_origin=None, page_break_per_record=True):
         try:
             doc = Document()
-            sorted_records = sorted(records, key=lambda x: self._safe_dt(x.get('出差日期時間（開始）')))
-            last_stop_by_owner = {}
+            record_groups = self._group_records_by_day(records)
 
-            for idx, record in enumerate(sorted_records):
+            for idx, group_records in enumerate(record_groups):
                 try:
-                    logger.info(f"處理第 {idx + 1}/{len(sorted_records)} 筆記錄")
+                    logger.info(f"\u8655\u7406\u7b2c {idx + 1}/{len(record_groups)} \u7d44\u540c\u65e5\u884c\u7a0b")
                     if idx > 0 and page_break_per_record:
                         doc.add_page_break()
 
-                    date_str = self._format_mmdd(record.get('出差日期時間（開始）'))
-                    owner_key, origin_display, origin_route, destination_display, destination_route = self._resolve_locations(
-                        record,
-                        fixed_origin,
-                        last_stop_by_owner,
-                    )
+                    date_str = self._format_mmdd(group_records[0].get('\u51fa\u5dee\u65e5\u671f\u6642\u9593\uff08\u958b\u59cb\uff09'))
+                    company_display, company_route, stops = self._resolve_trip_plan(group_records, fixed_origin)
+                    if not stops:
+                        logger.warning(f"\u7b2c {idx + 1} \u7d44\u6c92\u6709\u76ee\u7684\u5730\uff0c\u7565\u904e")
+                        continue
 
-                    title_text = f"{date_str}{origin_display}至{destination_display}"
+                    destination_displays = [stop['display'] for stop in stops]
+                    destination_routes = [stop['route'] for stop in stops]
+                    route_points = [company_route, *destination_routes, company_route]
+                    total_km = self._calculate_route_total_km(route_points)
+                    total_km_text = self._format_km(total_km)
+                    final_destination_display = destination_displays[-1]
+
+                    if len(destination_displays) == 1:
+                        title_text = f"{date_str}{company_display}\u81f3{final_destination_display}\uff0c\u8fd4\u56de{company_display}\uff0c\u5171\u6838\u92b7{total_km_text}\u516c\u91cc"
+                    else:
+                        joined_destinations = '\u3001'.join(destination_displays)
+                        title_text = f"{date_str}{company_display}\u81f3{joined_destinations}\uff0c\u8fd4\u56de{company_display}\uff0c\u5171\u6838\u92b7{total_km_text}\u516c\u91cc"
+
                     title_paragraph = doc.add_paragraph(title_text)
                     title_paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
                     for run in title_paragraph.runs:
                         run.bold = True
                         run.font.size = Pt(18)
 
-                    absolute_image_path = self._resolve_existing_image(record.get('StaticMapImage'))
-                    if not absolute_image_path:
-                        absolute_image_path = self._capture_image_from_route(origin_route, destination_route, record)
-                    if not absolute_image_path:
-                        absolute_image_path = self._capture_image_from_link(record)
+                    maps_url = self._build_multi_stop_maps_url(company_route, destination_routes, company_route)
+                    first_record = group_records[0]
+                    absolute_image_path = self._capture_image_from_maps_url(
+                        maps_url,
+                        first_record,
+                        log_context=f"{company_route} -> {' -> '.join(destination_routes)} -> {company_route}",
+                    )
+                    if not absolute_image_path and len(group_records) == 1:
+                        absolute_image_path = self._capture_image_from_link(first_record)
 
                     if absolute_image_path:
                         picture_paragraph = doc.add_paragraph()
@@ -234,13 +315,10 @@ class WordService:
                     else:
                         error_paragraph = doc.add_paragraph()
                         error_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        error_run = error_paragraph.add_run('本筆地圖截圖失敗')
+                        error_run = error_paragraph.add_run('\u672c\u7d44\u5730\u5716\u622a\u5716\u5931\u6557')
                         error_run.font.size = Pt(14)
-
-                    if owner_key and destination_route:
-                        last_stop_by_owner[owner_key] = destination_route
                 except Exception as e:
-                    logger.error(f"處理第 {idx + 1} 筆記錄時發生錯誤: {e}")
+                    logger.error(f"\u8655\u7406\u7b2c {idx + 1} \u7d44\u540c\u65e5\u884c\u7a0b\u6642\u767c\u751f\u932f\u8aa4: {e}")
                     continue
 
             project_display_name = project_name or '未分類'
